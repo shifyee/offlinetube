@@ -3,10 +3,9 @@ import { Innertube, ClientType } from 'youtubei.js';
 
 const WORKER_URL = 'https://offline-tube-cors-proxy.logan-storrs.workers.dev';
 
-// Setup the youtubei.js client to route through your Worker
 function getYTClient() {
   return Innertube.create({
-    client_type: ClientType.IOS, // IOS client gives the best muxed streams (up to 720p/1080p)
+    client_type: ClientType.IOS, // IOS client gives the best muxed streams
     retrieve_player: false,
     generate_session_locally: true,
     fetch: async (input, init = {}) => {
@@ -73,12 +72,12 @@ export const api = {
   },
 
   video: async (id) => {
+    // 1. Try getBasicInfo to bypass the /next 400 error
     try {
-      // Directly use youtubei.js to get metadata and streams
       const yt = await getYTClient();
-      const info = await yt.getInfo(id);
+      const basicInfo = await yt.getBasicInfo(id);
       
-      const formats = (info.streaming_data?.formats || [])
+      const formats = (basicInfo.streaming_data?.formats || [])
         .filter(f => f.url)
         .map(f => ({ 
           url: f.url, 
@@ -88,41 +87,44 @@ export const api = {
           type: 'video/mp4' 
         }));
 
-      const related = (info.watch_next_feed || [])
-        .filter(v => v.type === 'CompactVideo')
-        .map(v => ({
+      return { 
+        videoId: id, 
+        title: basicInfo.basic_info.title, 
+        author: basicInfo.basic_info.author, 
+        authorId: basicInfo.basic_info.channel_id, 
+        authorAvatar: basicInfo.basic_info.author?.thumbnails?.[0]?.url || null,
+        lengthSeconds: basicInfo.basic_info.duration, 
+        description: basicInfo.basic_info.short_description, 
+        videoThumbnails: getThumbnail(id), 
+        formatStreams: formats,
+        related: [] // No related videos for basicInfo
+      };
+    } catch (e) {
+      console.warn('getBasicInfo failed, trying getInfo...', e);
+    }
+
+    // 2. Fallback to getInfo if getBasicInfo fails
+    try {
+      const yt = await getYTClient();
+      const info = await yt.getInfo(id);
+      const formats = (info.streaming_data?.formats || [])
+        .filter(f => f.url)
+        .map(f => ({ 
+          url: f.url, qualityLabel: f.quality_label, contentLength: f.content_length, container: f.container, type: 'video/mp4' 
+        }));
+
+      return { 
+        videoId: id, title: info.basic_info.title, author: info.basic_info.author, authorId: info.basic_info.channel_id, 
+        authorAvatar: info.basic_info.author?.thumbnails?.[0]?.url || null, lengthSeconds: info.basic_info.duration, 
+        description: info.basic_info.short_description, videoThumbnails: getThumbnail(id), formatStreams: formats,
+        related: (info.watch_next_feed || []).filter(v => v.type === 'CompactVideo').map(v => ({
           videoId: v.id, title: v.title?.toString() || '', author: v.author?.name || '',
           authorId: v.author?.id || '', authorAvatar: v.author?.thumbnails?.[0]?.url || null,
           lengthSeconds: v.duration?.seconds || 0, videoThumbnails: getThumbnail(v.id)
-        })).slice(0, 10);
-
-      return { 
-        videoId: id, 
-        title: info.basic_info.title, 
-        author: info.basic_info.author, 
-        authorId: info.basic_info.channel_id, 
-        authorAvatar: info.basic_info.author?.thumbnails?.[0]?.url || null,
-        lengthSeconds: info.basic_info.duration, 
-        description: info.basic_info.short_description, 
-        videoThumbnails: getThumbnail(id), 
-        formatStreams: formats,
-        related
+        })).slice(0, 10)
       };
     } catch (e) {
-      console.error('Video fetch failed:', e);
-      // Only fall back to oEmbed if the YouTube API completely fails
-      try {
-        const res = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`);
-        if (res.ok) {
-          const data = await res.json();
-          return {
-            videoId: id, title: data.title, author: data.author_name, authorId: '',
-            authorAvatar: null, lengthSeconds: 0, description: 'Metadata loaded via fallback.',
-            videoThumbnails: [{ url: data.thumbnail_url }], formatStreams: [], related: []
-          };
-        }
-      } catch (err) {}
-      
+      console.error('Video fetch failed completely:', e);
       return { videoId: id, title: 'Video', author: 'Unknown', authorId: '', authorAvatar: null, lengthSeconds: 0, description: '', videoThumbnails: getThumbnail(id), formatStreams: [], related: [] };
     }
   },
