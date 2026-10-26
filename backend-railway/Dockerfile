@@ -1,26 +1,34 @@
-FROM node:20-bookworm-slim
+FROM node:20-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      ffmpeg \
-      curl \
-      ca-certificates \
-      python3 \
+# Install Python, ffmpeg, curl, unzip, and git
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    ffmpeg \
+    curl \
+    unzip \
+    git \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# standalone yt-dlp binary from the latest release
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
-      -o /usr/local/bin/yt-dlp \
-    && chmod +x /usr/local/bin/yt-dlp
+# Install Deno (JavaScript runtime for solving YouTube challenges)
+RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
+
+# Install the latest yt-dlp with all optional dependencies
+RUN pip3 install --break-system-packages "yt-dlp[default]"
 
 WORKDIR /app
+
 COPY package.json ./
 RUN npm install
+
 COPY . .
 
 ENV PORT=8080
 ENV YTDLP=/usr/local/bin/yt-dlp
 ENV NODE_ENV=production
+
 EXPOSE 8080
 
-# refresh yt-dlp on boot so a stale build doesn't break next month
-CMD ["sh", "-c", "yt-dlp -U >/dev/null 2>&1 || true; exec node server.js"]
+# Start the server
+CMD ["node", "server.js"]
