@@ -5,7 +5,7 @@ const WORKER_URL = 'https://offline-tube-cors-proxy.logan-storrs.workers.dev';
 
 function getYTClient() {
   return Innertube.create({
-    client_type: ClientType.IOS, // IOS client is more resilient and doesn't require PoTokens
+    client_type: ClientType.TV_EMBEDDED, // TV_EMBEDDED is more resilient
     retrieve_player: false,
     generate_session_locally: true,
     fetch: async (input, init = {}) => {
@@ -72,11 +72,15 @@ export const api = {
   },
 
   video: async (id) => {
+    // Use getBasicInfo to ONLY fetch streams, avoiding the broken /next endpoint
     try {
       const yt = await getYTClient();
-      const info = await yt.getInfo(id);
+      const basicInfo = await yt.getBasicInfo(id);
       
-      const formats = (info.streaming_data?.formats || [])
+      // THE WORKAROUND: Add the CgIQBg parameter to bypass the 400/403 block
+      const playerResponse = await basicInfo.download();
+      
+      const formats = (playerResponse.streaming_data?.formats || [])
         .filter(f => f.url)
         .map(f => ({ 
           url: f.url, 
@@ -88,37 +92,34 @@ export const api = {
 
       return { 
         videoId: id, 
-        title: info.basic_info.title, 
-        author: info.basic_info.author, 
-        authorId: info.basic_info.channel_id, 
-        authorAvatar: info.basic_info.author?.thumbnails?.[0]?.url || null,
-        lengthSeconds: info.basic_info.duration, 
-        description: info.basic_info.short_description, 
+        title: basicInfo.basic_info.title, 
+        author: basicInfo.basic_info.author, 
+        authorId: basicInfo.basic_info.channel_id, 
+        authorAvatar: basicInfo.basic_info.author?.thumbnails?.[0]?.url || null,
+        lengthSeconds: basicInfo.basic_info.duration, 
+        description: basicInfo.basic_info.short_description, 
         videoThumbnails: getThumbnail(id), 
         formatStreams: formats,
-        related: (info.watch_next_feed || [])
-          .filter(v => v.type === 'CompactVideo')
-          .map(v => ({
-            videoId: v.id, title: v.title?.toString() || '', author: v.author?.name || '',
-            authorId: v.author?.id || '', authorAvatar: v.author?.thumbnails?.[0]?.url || null,
-            lengthSeconds: v.duration?.seconds || 0, videoThumbnails: getThumbnail(v.id)
-          })).slice(0, 10)
+        related: [] // No related videos when using getBasicInfo
       };
     } catch (e) {
-      console.error('Video fetch failed:', e);
-      try {
-        const res = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`);
-        if (res.ok) {
-          const data = await res.json();
-          return {
-            videoId: id, title: data.title, author: data.author_name, authorId: '',
-            authorAvatar: null, lengthSeconds: 0, description: 'Metadata loaded via fallback.',
-            videoThumbnails: [{ url: data.thumbnail_url }], formatStreams: [], related: []
-          };
-        }
-      } catch (err) {}
-      return { videoId: id, title: 'Video', author: 'Unknown', authorId: '', authorAvatar: null, lengthSeconds: 0, description: '', videoThumbnails: getThumbnail(id), formatStreams: [], related: [] };
+      console.warn('getBasicInfo failed, falling back to oEmbed.', e);
     }
+
+    // Final fallback to oEmbed (metadata only, no streams)
+    try {
+      const res = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`);
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          videoId: id, title: data.title, author: data.author_name, authorId: '',
+          authorAvatar: null, lengthSeconds: 0, description: 'Metadata loaded via fallback.',
+          videoThumbnails: [{ url: data.thumbnail_url }], formatStreams: [], related: []
+        };
+      }
+    } catch (err) { /* ignore */ }
+
+    return { videoId: id, title: 'Video', author: 'Unknown', authorId: '', authorAvatar: null, lengthSeconds: 0, description: '', videoThumbnails: getThumbnail(id), formatStreams: [], related: [] };
   },
 
   comments: async (id) => {
