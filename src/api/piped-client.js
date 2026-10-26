@@ -2,7 +2,6 @@
 
 const WORKER_URL = 'https://offline-tube-cors-proxy.logan-storrs.workers.dev';
 
-// A list of instances to try in order
 const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
   'https://pipedapi.nosebs.ru',
@@ -10,7 +9,6 @@ const PIPED_INSTANCES = [
   'https://api.piped.private.coffee'
 ];
 
-// Helper to fetch from the first working instance
 async function fetchProxy(path) {
   let lastError;
   for (const instance of PIPED_INSTANCES) {
@@ -21,9 +19,7 @@ async function fetchProxy(path) {
       
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       
-      const data = await res.json();
-      return data; // Success! Exit the loop and return data
-      
+      return await res.json(); 
     } catch (e) {
       lastError = e;
       console.warn(`Instance ${instance} failed, trying next...`);
@@ -53,14 +49,9 @@ export const api = {
   popular: async () => {
     try {
       const data = await fetchProxy('/trending?region=US');
-      if (Array.isArray(data)) {
-        return data.map(mapPipedVideo);
-      }
+      if (Array.isArray(data)) return data.map(mapPipedVideo);
       return [];
-    } catch (e) {
-      console.error('Home feed failed:', e);
-      return [];
-    }
+    } catch (e) { return []; }
   },
 
   search: async (q, type = 'video') => {
@@ -91,15 +82,22 @@ export const api = {
     try {
       const data = await fetchProxy(`/streams/${id}`);
       
+      // Piped provides a 'proxyUrl' for streams to bypass CORS
+      const proxyBase = data.proxyUrl || '';
+      
       const formats = (data.videoStreams || [])
         .filter(s => !s.videoOnly && s.url)
-        .map(s => ({ 
-          url: s.url, 
-          qualityLabel: s.quality, 
-          contentLength: s.contentLength, 
-          container: 'mp4', 
-          type: 'video/mp4' 
-        }));
+        .map(s => {
+          // Construct the full URL using Piped's proxy if available
+          const fullUrl = s.url.startsWith('http') ? s.url : `${proxyBase}${s.url}`;
+          return { 
+            url: fullUrl, 
+            qualityLabel: s.quality, 
+            contentLength: s.contentLength, 
+            container: 'mp4', 
+            type: 'video/mp4' 
+          };
+        });
         
       const related = (data.relatedStreams || [])
         .map(mapPipedVideo)
@@ -118,7 +116,6 @@ export const api = {
         related
       };
     } catch (e) {
-      console.error('Video fetch failed:', e);
       return { videoId: id, title: 'Video', author: 'Unknown', authorId: '', authorAvatar: null, lengthSeconds: 0, description: '', videoThumbnails: getThumbnail(id), formatStreams: [], related: [] };
     }
   },
