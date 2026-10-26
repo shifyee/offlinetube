@@ -2,7 +2,8 @@
 import { resolveUrl } from '../api/piped-client'
 import { db, clearChunks } from '../db'
 
-const CHUNK_SIZE = 2 * 1024 * 1024
+const CHUNK_SIZE = 2 * 1024 * 1024 // 2MB chunks
+const WORKER_URL = 'https://offline-tube-cors-proxy.logan-storrs.workers.dev';
 
 function aborted(signal) {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
@@ -12,8 +13,8 @@ export async function downloadVideo(video, streamUrl, { onProgress, signal } = {
   const id = video.videoId
   const rawUrl = resolveUrl(streamUrl)
   
-  // Route through a public CORS proxy to bypass YouTube's block
-  const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(rawUrl)}`
+  // Route the download through your Cloudflare Worker to bypass CORS
+  const proxyUrl = `${WORKER_URL}?url=${encodeURIComponent(rawUrl)}`
 
   await clearChunks(id)
   await db.videos.put({
@@ -24,6 +25,8 @@ export async function downloadVideo(video, streamUrl, { onProgress, signal } = {
 
   let supportsRange = false
   let total = 0
+
+  // 1. Probe the file to see if it supports Range requests
   try {
     const probe = await fetch(proxyUrl, {
       method: 'GET',
@@ -43,6 +46,7 @@ export async function downloadVideo(video, streamUrl, { onProgress, signal } = {
     if (e.name === 'AbortError') throw e
   }
 
+  // 2. Download in chunks if Range is supported
   if (supportsRange && total > 0) {
     try {
       const numChunks = Math.ceil(total / CHUNK_SIZE)
@@ -74,7 +78,7 @@ export async function downloadVideo(video, streamUrl, { onProgress, signal } = {
     }
   }
 
-  // Fallback: Full fetch
+  // 3. Fallback: Full fetch (if Range is not supported)
   const res = await fetch(proxyUrl, { signal })
   if (!res.ok) throw new Error(`Fetch failed: ${res.status}`)
   const contentLength = parseInt(res.headers.get('content-length') || '0', 10)
