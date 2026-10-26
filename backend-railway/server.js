@@ -10,19 +10,44 @@ const execPromise = util.promisify(exec);
 const app = express();
 app.use(cors());
 
+// Helper to run yt-dlp with retries and a fallback list of clients
+async function runYtDlp(args) {
+  let lastError;
+  
+  // Try the ios client first, then fall back to android
+  const clients = ['ios', 'android'];
+  
+  for (const client of clients) {
+    const fullArgs = `yt-dlp --extractor-args "youtube:player_client=${client}" ${args}`;
+    
+    for (let i = 0; i < 2; i++) { // Retry each client once
+      try {
+        const { stdout, stderr } = await execPromise(fullArgs, { maxBuffer: 1024 * 1024 * 50 });
+        if (stderr && stderr.includes('ERROR')) {
+          console.warn('yt-dlp stderr:', stderr);
+        }
+        return stdout;
+      } catch (e) {
+        lastError = e;
+        console.warn(`yt-dlp attempt with ${client} failed (try ${i + 1}):`, e.message);
+        if (e.stderr) console.error('Full stderr:', e.stderr);
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+  }
+  
+  throw lastError;
+}
+
 app.get('/api/info', async (req, res) => {
   const { id } = req.query;
   if (!id) return res.status(400).json({ error: 'Missing video ID' });
 
   try {
     const url = `https://www.youtube.com/watch?v=${id}`;
-    
-    // Use the android_vr client to bypass datacenter blocks and get high-res streams
-    const cmd = `yt-dlp --extractor-args "youtube:player_client=android_vr" --dump-json --no-playlist "${url}"`;
-    const { stdout } = await execPromise(cmd, { maxBuffer: 1024 * 1024 * 10 });
+    const stdout = await runYtDlp(`--dump-json --no-playlist "${url}"`);
     const info = JSON.parse(stdout);
 
-    // Extract unique video heights
     const availableHeights = new Set();
     info.formats.forEach(f => {
       if (f.vcodec !== 'none' && f.height) {
@@ -32,13 +57,14 @@ app.get('/api/info', async (req, res) => {
 
     const sortedHeights = Array.from(availableHeights).sort((a, b) => b - a);
 
-    // If for some reason no heights are found, fall back to a default
-    if (sortedHeights.length === 0) sortedHeights.push(360);
+    if (sortedHeights.length === 0) {
+      throw new Error('No video formats found. The video might be private or restricted.');
+    }
 
     const formats = sortedHeights.map(h => ({
       qualityLabel: `${h}p`,
       height: h,
-      container: 'mp4', // We will merge into mp4
+      container: 'mp4',
       type: 'video/mp4',
       url: `/api/stream?id=${id}&height=${h}`
     }));
@@ -68,13 +94,9 @@ app.get('/api/stream', async (req, res) => {
 
   try {
     const url = `https://www.youtube.com/watch?v=${id}`;
-    
-    // Download the best video up to the requested height, plus best audio, and merge them
     const formatStr = `bv*[height<=${height}]+ba/b[height<=${height}]/b`;
-    const cmd = `yt-dlp --extractor-args "youtube:player_client=android_vr" -f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`;
     
-    console.log(`Downloading true ${height}p for ${id}...`);
-    await execPromise(cmd, { maxBuffer: 1024 * 1024 * 100, timeout: 300000 });
+    await runYtDlp(`-f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`);
 
     if (!fs.existsSync(tempFile)) {
       throw new Error('Download failed, file not found');
