@@ -121,11 +121,11 @@ app.get('/api/stream', async (req, res) => {
   try {
     const url = `https://www.youtube.com/watch?v=${id}`;
     
-    // THE FIX: More robust fallback chain
-    // 1. Best video up to requested height + best audio
-    // 2. If that fails, best video + best audio
-    // 3. If that fails, absolute best combined stream
-    const formatStr = `bv*[height<=${height}]+ba/b/bv*+ba/b`;
+    // THE FIX: A more robust fallback chain that guarantees a download
+    // 1. Try best video up to requested height + best audio
+    // 2. If that fails, try best video + best audio (ignoring height)
+    // 3. If that fails, try the absolute best combined stream
+    const formatStr = `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]/best`;
     
     await runYtDlp(`-f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`);
 
