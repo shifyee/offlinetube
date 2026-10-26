@@ -33,6 +33,30 @@ async function load(id) {
   comments.value = []
   showComments.value = false
   
+  // 1. Check IndexedDB first for an instant offline load
+  const localVideo = await db.videos.get(id)
+  
+  if (localVideo && localVideo.status === 'complete') {
+    video.value = {
+      videoId: localVideo.id,
+      title: localVideo.title,
+      author: localVideo.author,
+      authorId: localVideo.authorId,
+      authorAvatar: null,
+      lengthSeconds: localVideo.lengthSeconds,
+      description: 'This video is saved in your offline library.',
+      videoThumbnails: localVideo.thumbnail ? [{ url: localVideo.thumbnail }] : [],
+      formatStreams: [{ url: 'offline' }] // Dummy stream to bypass checks
+    }
+    
+    // Populate "Up Next" with other downloaded videos
+    upNext.value = library.complete.filter(v => v.id !== id).slice(0, 10)
+    
+    loading.value = false
+    return
+  }
+
+  // 2. If not downloaded, fetch from online APIs
   try {
     video.value = await api.video(id)
     if (video.value.related && video.value.related.length > 0) {
@@ -40,21 +64,13 @@ async function load(id) {
     }
   } catch (e) {
     error.value = String(e.message || e)
-    const local = await db.videos.get(id)
-    if (local) {
-      video.value = {
-        videoId: local.id, title: local.title, author: local.author, authorId: local.authorId,
-        authorAvatar: null, lengthSeconds: local.lengthSeconds, description: '',
-        videoThumbnails: local.thumbnail ? [{ url: local.thumbnail }] : [], formatStreams: []
-      }
-      error.value = null
-    }
   } finally {
     loading.value = false
   }
 }
 
 async function loadComments() {
+  if (isOffline.value) return // Disable comments offline
   if (showComments.value) { showComments.value = false; return }
   showComments.value = true
   if (comments.value.length) return
@@ -62,7 +78,9 @@ async function loadComments() {
   catch (e) { comments.value = [{ commentId: '_e', author: 'Error', content: String(e.message || e) }] }
 }
 
-onMounted(() => load(route.params.id))
+onMounted(() => {
+  library.refresh().then(() => load(route.params.id))
+})
 watch(() => route.params.id, (id) => { if (id) load(id) })
 
 const handleImageError = (e) => { e.target.src = 'https://placehold.co/400x225/1f1f1f/aaaaaa?text=No+Thumbnail' }
@@ -84,16 +102,15 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
         
         <div class="flex flex-wrap items-center justify-between gap-4 mt-3 border-b border-white/10 pb-4">
           <div class="flex items-center gap-3">
-            <!-- Only route to channel if authorId exists -->
             <component :is="video.authorId ? 'RouterLink' : 'div'" :to="video.authorId ? `/channel/${video.authorId}` : null" class="w-11 h-11 rounded-full bg-surface-2 flex items-center justify-center text-lg font-bold text-muted shrink-0 overflow-hidden">
               <img v-if="video.authorAvatar" :src="video.authorAvatar" @error="handleAvatarError" class="w-full h-full object-cover" />
               <span v-else>{{ video.author?.charAt(0) || '?' }}</span>
             </component>
             <div>
               <component :is="video.authorId ? 'RouterLink' : 'span'" :to="video.authorId ? `/channel/${video.authorId}` : null" class="font-bold hover:text-white block">{{ video.author }}</component>
-              <span class="text-xs text-muted">Visit Channel</span>
+              <span class="text-xs text-muted">{{ isOffline ? 'Downloaded' : 'Visit Channel' }}</span>
             </div>
-            <button class="ml-2 px-4 py-1.5 rounded-full bg-accent hover:bg-red-700 text-white text-sm font-medium transition-colors">
+            <button v-if="!isOffline" class="ml-2 px-4 py-1.5 rounded-full bg-accent hover:bg-red-700 text-white text-sm font-medium transition-colors">
               Subscribe
             </button>
           </div>
@@ -123,18 +140,18 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
 
         <div class="mt-4 bg-surface rounded-xl p-4 text-sm cursor-pointer hover:bg-surface-2 transition-colors" @click="isExpanded = !isExpanded">
           <div class="font-bold text-xs text-muted mb-1">
-            {{ video.lengthSeconds ? formatDuration(video.lengthSeconds) : 'Unknown length' }} · Streamed on {{ new Date().toLocaleDateString() }}
+            {{ video.lengthSeconds ? formatDuration(video.lengthSeconds) : 'Unknown length' }} · {{ isOffline ? 'Saved Offline' : 'Streamed on ' + new Date().toLocaleDateString() }}
           </div>
           <div :class="isExpanded ? 'whitespace-pre-wrap' : 'line-clamp-2'">
             {{ video.description || 'No description provided.' }}
           </div>
         </div>
 
-        <button @click="loadComments" class="mt-6 font-bold text-sm text-accent hover:text-red-400">
+        <button v-if="!isOffline" @click="loadComments" class="mt-6 font-bold text-sm text-accent hover:text-red-400">
           {{ showComments ? 'Hide comments' : 'Show comments' }}
         </button>
 
-        <div v-if="showComments" class="mt-4 space-y-4">
+        <div v-if="showComments && !isOffline" class="mt-4 space-y-4">
           <div v-if="!comments.length" class="text-muted text-sm">No comments.</div>
           <div v-for="c in comments" :key="c.commentId" class="flex gap-3">
             <div class="w-10 h-10 rounded-full bg-surface-2 flex items-center justify-center font-bold text-muted shrink-0">{{ c.author.charAt(0) }}</div>
@@ -148,11 +165,11 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
     </div>
 
     <div class="w-96 shrink-0 hidden lg:block">
-      <h2 class="font-bold text-lg mb-4">Up Next</h2>
+      <h2 class="font-bold text-lg mb-4">{{ isOffline ? 'Up Next (Offline)' : 'Up Next' }}</h2>
       <div class="space-y-3">
-        <RouterLink v-for="v in upNext" :key="v.videoId" :to="`/watch/${v.videoId}`" class="flex gap-2 group">
+        <RouterLink v-for="v in upNext" :key="v.videoId || v.id" :to="`/watch/${v.videoId || v.id}`" class="flex gap-2 group">
           <div class="relative w-40 aspect-video bg-surface rounded-lg overflow-hidden shrink-0">
-            <img v-if="bestThumbnail(v)" :src="bestThumbnail(v).url" @error="handleImageError" class="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+            <img v-if="bestThumbnail(v) || v.thumbnail" :src="bestThumbnail(v)?.url || v.thumbnail" @error="handleImageError" class="w-full h-full object-cover group-hover:scale-105 transition-transform" />
             <span v-if="v.lengthSeconds" class="absolute bottom-1 right-1 bg-black/80 text-[11px] px-1 rounded">{{ formatDuration(v.lengthSeconds) }}</span>
           </div>
           <div class="flex-1 min-w-0">
