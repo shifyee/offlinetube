@@ -10,35 +10,36 @@ const execPromise = util.promisify(exec);
 const app = express();
 app.use(cors());
 
-// Path to your cookies file (we'll create this next)
+// Path to your cookies file (if you decide to add one later)
 const COOKIES_FILE = '/app/cookies.txt';
 
 async function runYtDlp(args) {
   let lastError;
-  // Use the ios client (works well with POT) and add the POT provider argument
-  const potArgs = `--extractor-args "youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416"`;
+  // Try multiple reliable clients in order
+  const clients = ['tv', 'mweb', 'android', 'ios'];
   
-  // Add cookies if the file exists
-  let cookieArgs = '';
-  if (fs.existsSync(COOKIES_FILE)) {
-    cookieArgs = `--cookies "${COOKIES_FILE}"`;
-    console.log('Using cookies for download.');
-  }
+  for (const client of clients) {
+    // Add the POT provider argument and client-specific arguments
+    const potArgs = `--extractor-args "youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416"`;
+    let cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
+    const fullArgs = `yt-dlp ${potArgs} ${cookieArgs} --extractor-args "youtube:player_client=${client}" ${args}`;
 
-  const fullArgs = `yt-dlp ${potArgs} ${cookieArgs} --extractor-args "youtube:player_client=ios" ${args}`;
-
-  for (let i = 0; i < 3; i++) {
-    try {
-      const { stdout, stderr } = await execPromise(fullArgs, { maxBuffer: 1024 * 1024 * 50 });
-      if (stderr && stderr.includes('ERROR')) console.warn('yt-dlp stderr:', stderr);
-      return stdout;
-    } catch (e) {
-      lastError = e;
-      console.warn(`yt-dlp attempt ${i + 1} failed:`, e.message);
-      if (e.stderr) console.error('Full stderr:', e.stderr);
-      await new Promise(r => setTimeout(r, 2000));
+    for (let i = 0; i < 2; i++) { // Retry each client once
+      try {
+        const { stdout, stderr } = await execPromise(fullArgs, { maxBuffer: 1024 * 1024 * 50 });
+        if (stderr && stderr.includes('ERROR')) {
+          console.warn(`yt-dlp stderr (${client}):`, stderr);
+        }
+        return stdout;
+      } catch (e) {
+        lastError = e;
+        console.warn(`yt-dlp attempt with ${client} failed (try ${i + 1}):`, e.message);
+        if (e.stderr) console.error(`Full stderr (${client}):`, e.stderr);
+        await new Promise(r => setTimeout(r, 2000));
+      }
     }
   }
+  
   throw lastError;
 }
 
@@ -59,7 +60,7 @@ app.get('/api/info', async (req, res) => {
     });
 
     const sortedHeights = Array.from(availableHeights).sort((a, b) => b - a);
-    if (sortedHeights.length === 0) throw new Error('No video formats found. The video might be private or restricted.');
+    if (sortedHeights.length === 0) throw new Error('No video formats found.');
 
     const formats = sortedHeights.map(h => ({
       qualityLabel: `${h}p`,
