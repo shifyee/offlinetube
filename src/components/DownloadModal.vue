@@ -8,6 +8,7 @@ const props = defineProps({
 const emit = defineEmits(['close'])
 const downloads = useDownloadsStore()
 
+// Sort formats from highest to lowest quality
 const formats = (props.video.formatStreams || []).sort((a, b) => {
   const hA = parseInt(a.qualityLabel) || 0;
   const hB = parseInt(b.qualityLabel) || 0;
@@ -24,13 +25,13 @@ function pick(format) {
   <div class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" @click.self="$emit('close')">
     <div class="bg-surface rounded-xl p-5 max-w-md w-full border border-white/5 shadow-2xl">
       <div class="flex items-center justify-between mb-4">
-        <h2 class="font-bold text-lg">Choose quality</h2>
+        <h2 class="font-bold text-lg">Save for Offline</h2>
         <button @click="$emit('close')" class="text-muted hover:text-white text-2xl leading-none">×</button>
       </div>
       <p class="text-xs text-muted mb-4 line-clamp-2">{{ video.title }}</p>
       
       <div v-if="!formats.length" class="text-sm text-muted py-8 text-center bg-surface-2 rounded-lg">
-        No downloadable streams available for this video.
+        No downloadable streams available.
       </div>
       
       <div class="space-y-2 max-h-80 overflow-y-auto pr-1">
