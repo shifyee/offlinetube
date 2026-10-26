@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 const routes = [
   { path: '/',        name: 'home',      component: () => import('../views/HomeView.vue') },
+  { path: '/downloader', name: 'downloader', component: () => import('../views/DownloaderView.vue') },
   { path: '/search',  name: 'search',    component: () => import('../views/SearchView.vue') },
   { path: '/watch/:id', name: 'watch',   component: () => import('../views/VideoView.vue') },
   { path: '/channel/:id', name: 'channel', component: () => import('../views/ChannelView.vue') },
@@ -9,7 +10,6 @@ const routes = [
   { path: '/downloads', name: 'downloads', component: () => import('../views/DownloadsView.vue') },
   { path: '/library',   name: 'library',   component: () => import('../views/LibraryView.vue') },
   { path: '/settings',  name: 'settings',  component: () => import('../views/SettingsView.vue') },
-  // Placeholder routes for OAuth-required pages
   { path: '/subscriptions', component: () => import('../views/PlaceholderView.vue'), props: { title: 'Subscriptions' } },
   { path: '/channels',      component: () => import('../views/PlaceholderView.vue'), props: { title: 'Channels' } },
   { path: '/playlists',     component: () => import('../views/PlaceholderView.vue'), props: { title: 'Playlists' } },
