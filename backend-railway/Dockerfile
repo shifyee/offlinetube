@@ -14,8 +14,8 @@ RUN apt-get update && apt-get install -y \
 # Install Deno (JavaScript runtime for YouTube challenges)
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
-# Install the nightly build of yt-dlp with all dependencies
-RUN pip3 install --break-system-packages --force-reinstall https://github.com/yt-dlp/yt-dlp/archive/nightly.tar.gz
+# Install the nightly yt-dlp via pip (more reliable than tarball)
+RUN pip3 install --break-system-packages --force-reinstall --pre "yt-dlp[default]"
 
 # Install the POT provider plugin
 RUN mkdir -p /usr/local/lib/yt_dlp_plugins/extractor/ && \
