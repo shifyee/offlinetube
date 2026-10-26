@@ -15,6 +15,16 @@ onMounted(() => library.refresh())
 
 function doSearch() {
   if (!q.value.trim()) return
+  
+  // Check if the input is a YouTube URL
+  const urlRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|youtube\.com\/shorts\/)([^"&?\/\s]{11})/i;
+  if (urlRegex.test(q.value)) {
+    router.push({ path: '/downloader', query: { url: q.value } })
+    q.value = '' // Clear input
+    return
+  }
+
+  // Otherwise, it's a normal search
   router.push({ path: '/search', query: { q: q.value } })
 }
 </script>
@@ -37,7 +47,7 @@ function doSearch() {
           <input
             v-model="q"
             type="search"
-            placeholder="Search / Go to URL"
+            placeholder="Search or paste YouTube URL to download..."
             class="w-full h-9 px-4 rounded-full bg-surface border border-white/10 focus:outline-none focus:border-white/30 text-sm"
           />
         </form>
