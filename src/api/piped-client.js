@@ -1,7 +1,6 @@
 // src/api/piped-client.js
 
-// PASTE YOUR RAILWAY URL HERE (NO trailing slash)
-const RAILWAY_BACKEND = 'https://your-railway-app.up.railway.app';
+const RAILWAY_BACKEND = 'https://offlinetube-production.up.railway.app';
 
 function getThumbnail(videoId) {
   return [{ url: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg` }];
