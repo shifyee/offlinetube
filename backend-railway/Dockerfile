@@ -1,6 +1,6 @@
 FROM node:20-slim
 
-# Install Python, ffmpeg, curl, unzip, and other dependencies
+# Install Python, ffmpeg, curl, unzip, and git
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
@@ -11,10 +11,10 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Deno (required for the POT provider)
+# Install Deno (for the n-challenge solver and POT provider)
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
-# Install the latest yt-dlp with optional dependencies
+# Install the latest yt-dlp with all optional dependencies
 RUN pip3 install --break-system-packages "yt-dlp[default]"
 
 # Install the bgutil POT provider plugin
@@ -30,5 +30,5 @@ RUN npm install
 
 COPY . .
 
-# Start the POT provider server in the background and then start the app
+# Start the POT provider in the background and then start the app
 CMD ["sh", "-c", "deno run --allow-net --allow-io --allow-env --allow-run --allow-read --allow-write https://raw.githubusercontent.com/Brainicism/bgutil-ytdlp-pot-provider/master/server/src/main.ts & node server.js"]
