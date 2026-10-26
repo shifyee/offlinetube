@@ -14,18 +14,15 @@ const COOKIES_FILE = '/tmp/cookies.txt';
 
 if (process.env.YOUTUBE_COOKIES) {
   try {
-    // 1. Fix newlines (replace literal \n strings and CRLF with LF)
+    // 1. Fix newlines: Replace literal \n strings with actual newlines, and convert CRLF to LF
     let cookiesContent = process.env.YOUTUBE_COOKIES
       .replace(/\\n/g, '\n')
       .replace(/\r\n/g, '\n');
 
-    // 2. Fix tabs. Netscape cookies require literal tab characters, 
-    // but env variables often convert them to spaces. 
-    // We replace sequences of spaces with a single tab.
-    // We do this only on lines that aren't comments.
+    // 2. Fix tabs: Netscape cookies require literal tab characters. 
+    // We replace any sequence of 2 or more spaces with a single tab on non-comment lines.
     cookiesContent = cookiesContent.split('\n').map(line => {
       if (line.startsWith('#') || line.trim() === '') return line;
-      // Replace 2 or more spaces with a single tab
       return line.replace(/ {2,}/g, '\t');
     }).join('\n');
 
@@ -40,10 +37,12 @@ if (process.env.YOUTUBE_COOKIES) {
 
 async function runYtDlp(args) {
   let lastError;
+  // 3. Removed 'ios' because it drops cookies. 'tv', 'mweb', and 'web_creator' are the most reliable with cookies.
   const clients = ['tv', 'mweb', 'web_creator', 'android'];
   
   for (const client of clients) {
     let cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
+    // 4. Added --no-warnings to keep stdout clean for JSON parsing
     const fullArgs = `yt-dlp ${cookieArgs} --no-warnings --extractor-args "youtube:player_client=${client}" ${args}`;
 
     try {
@@ -53,6 +52,7 @@ async function runYtDlp(args) {
     } catch (e) {
       lastError = e;
       console.warn(`yt-dlp attempt with ${client} failed:`, e.message);
+      if (e.stderr) console.error(`Full stderr (${client}):`, e.stderr);
     }
   }
   throw lastError;
@@ -66,6 +66,7 @@ app.get('/api/info', async (req, res) => {
     const url = `https://www.youtube.com/watch?v=${id}`;
     const stdout = await runYtDlp(`--dump-json --no-playlist "${url}"`);
     
+    // 5. Robust JSON parsing: extract only the JSON object from stdout
     let jsonString = stdout.trim();
     const startIdx = jsonString.indexOf('{');
     const endIdx = jsonString.lastIndexOf('}');
@@ -109,6 +110,7 @@ app.get('/api/info', async (req, res) => {
     });
   } catch (error) {
     console.error('yt-dlp metadata error:', error);
+    // 6. Send a descriptive error instead of a generic 500
     return res.status(500).json({ 
       error: 'Backend failed to fetch video', 
       details: error.message,
@@ -132,6 +134,7 @@ app.get('/api/stream', async (req, res) => {
     if (!fs.existsSync(tempFile)) throw new Error('Download failed, file not found');
 
     const stat = fs.statSync(tempFile);
+    console.log(`Success! File size: ${(stat.size / 1024 / 1024).toFixed(2)} MB`);
     
     res.setHeader('Content-Length', stat.size);
     res.setHeader('Content-Type', 'video/mp4');
