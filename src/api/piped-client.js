@@ -5,8 +5,9 @@ const WORKER_URL = 'https://offline-tube-cors-proxy.logan-storrs.workers.dev';
 
 function getYTClient() {
   return Innertube.create({
-    client_type: ClientType.IOS, // IOS client gives the best muxed streams
-    retrieve_player: false,
+    // Use TV_EMBEDDED for better compatibility and muxed streams
+    client_type: ClientType.TV_EMBEDDED,
+    retrieve_player: false, // Keep false to avoid player-related 400s
     generate_session_locally: true,
     fetch: async (input, init = {}) => {
       const url = typeof input === 'string' ? input : (input?.url || input?.href);
@@ -14,6 +15,7 @@ function getYTClient() {
       
       const proxyUrl = `${WORKER_URL}?url=${encodeURIComponent(url)}`;
       const options = { ...init };
+      // The browser will throw if a GET/HEAD request has a body
       if (options.method === 'GET' || options.method === 'HEAD' || !options.method) {
         delete options.body;
       }
@@ -72,7 +74,7 @@ export const api = {
   },
 
   video: async (id) => {
-    // 1. Try getBasicInfo to bypass the /next 400 error
+    // Use getBasicInfo to only fetch streams, avoiding the broken /next endpoint
     try {
       const yt = await getYTClient();
       const basicInfo = await yt.getBasicInfo(id);
@@ -97,36 +99,26 @@ export const api = {
         description: basicInfo.basic_info.short_description, 
         videoThumbnails: getThumbnail(id), 
         formatStreams: formats,
-        related: [] // No related videos for basicInfo
+        related: [] 
       };
     } catch (e) {
-      console.warn('getBasicInfo failed, trying getInfo...', e);
+      console.warn('getBasicInfo failed, falling back to oEmbed.', e);
     }
 
-    // 2. Fallback to getInfo if getBasicInfo fails
+    // Final fallback to oEmbed (metadata only, no streams)
     try {
-      const yt = await getYTClient();
-      const info = await yt.getInfo(id);
-      const formats = (info.streaming_data?.formats || [])
-        .filter(f => f.url)
-        .map(f => ({ 
-          url: f.url, qualityLabel: f.quality_label, contentLength: f.content_length, container: f.container, type: 'video/mp4' 
-        }));
+      const res = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`);
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          videoId: id, title: data.title, author: data.author_name, authorId: '',
+          authorAvatar: null, lengthSeconds: 0, description: 'Metadata loaded via fallback.',
+          videoThumbnails: [{ url: data.thumbnail_url }], formatStreams: [], related: []
+        };
+      }
+    } catch (err) { /* ignore */ }
 
-      return { 
-        videoId: id, title: info.basic_info.title, author: info.basic_info.author, authorId: info.basic_info.channel_id, 
-        authorAvatar: info.basic_info.author?.thumbnails?.[0]?.url || null, lengthSeconds: info.basic_info.duration, 
-        description: info.basic_info.short_description, videoThumbnails: getThumbnail(id), formatStreams: formats,
-        related: (info.watch_next_feed || []).filter(v => v.type === 'CompactVideo').map(v => ({
-          videoId: v.id, title: v.title?.toString() || '', author: v.author?.name || '',
-          authorId: v.author?.id || '', authorAvatar: v.author?.thumbnails?.[0]?.url || null,
-          lengthSeconds: v.duration?.seconds || 0, videoThumbnails: getThumbnail(v.id)
-        })).slice(0, 10)
-      };
-    } catch (e) {
-      console.error('Video fetch failed completely:', e);
-      return { videoId: id, title: 'Video', author: 'Unknown', authorId: '', authorAvatar: null, lengthSeconds: 0, description: '', videoThumbnails: getThumbnail(id), formatStreams: [], related: [] };
-    }
+    return { videoId: id, title: 'Video', author: 'Unknown', authorId: '', authorAvatar: null, lengthSeconds: 0, description: '', videoThumbnails: getThumbnail(id), formatStreams: [], related: [] };
   },
 
   comments: async (id) => {
