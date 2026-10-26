@@ -7,14 +7,27 @@ function getThumbnail(videoId) {
 }
 
 export const api = {
-  // The Downloader page will use this
   video: async (id) => {
     try {
       const res = await fetch(`${RAILWAY_BACKEND}/api/info?id=${id}`);
-      if (!res.ok) throw new Error(`Backend error: ${res.status}`);
+      
+      if (!res.ok) {
+        // Try to parse the detailed error from the backend
+        let errorDetail = `HTTP ${res.status}`;
+        try {
+          const errorData = await res.json();
+          if (errorData.details || errorData.stderr) {
+            errorDetail = errorData.stderr || errorData.details;
+          }
+        } catch (e) {
+          // If parsing fails, use the raw text
+          errorDetail = await res.text();
+        }
+        throw new Error(errorDetail);
+      }
+
       const data = await res.json();
       
-      // yt-dlp returns URLs as relative paths (/api/stream...). We need to make them absolute.
       if (data.formatStreams) {
         data.formatStreams = data.formatStreams.map(f => ({
           ...f,
@@ -25,11 +38,10 @@ export const api = {
       return data;
     } catch (e) {
       console.error('Video fetch failed:', e);
-      return { videoId: id, title: 'Video', author: 'Unknown', authorId: '', authorAvatar: null, lengthSeconds: 0, description: '', videoThumbnails: getThumbnail(id), formatStreams: [], related: [] };
+      throw e; // Re-throw so DownloaderView.vue can catch it and display the message
     }
   },
   
-  // Placeholder functions for other pages to prevent crashes
   popular: async () => { return []; },
   search: async () => { return []; },
   channel: async () => { return { author: 'Unknown', latestVideos: [] }; },
