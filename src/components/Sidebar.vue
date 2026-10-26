@@ -6,7 +6,8 @@ defineProps({ isOpen: { type: Boolean, required: true } })
 const auth = useAuthStore()
 
 const nav = [
-  { to: '/', label: 'Trending', icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
+  { to: '/downloader', label: 'Downloader', icon: 'M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z' }, // Added Downloader
+  { to: '/', label: 'Home / Trending', icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
   { to: '/subscriptions', label: 'Subscriptions', icon: 'M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z' },
   { to: '/channels', label: 'Channels', icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z' },
   { to: '/playlists', label: 'Playlists', icon: 'M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-1 9H9V9h10v2zm-4 4H9v-2h6v2zm4-8H9V5h10v2z' },
