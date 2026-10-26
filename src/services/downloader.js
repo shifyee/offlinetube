@@ -1,9 +1,7 @@
 // src/services/downloader.js
-import { resolveUrl } from '../api/piped-client'
 import { db, clearChunks } from '../db'
 
 const CHUNK_SIZE = 2 * 1024 * 1024 // 2MB chunks
-const WORKER_URL = 'https://offline-tube-cors-proxy.logan-storrs.workers.dev';
 
 function aborted(signal) {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
@@ -11,11 +9,7 @@ function aborted(signal) {
 
 export async function downloadVideo(video, streamUrl, { onProgress, signal } = {}) {
   const id = video.videoId
-  const rawUrl = resolveUrl(streamUrl)
   
-  // Route the download through your Cloudflare Worker to bypass CORS
-  const proxyUrl = `${WORKER_URL}?url=${encodeURIComponent(rawUrl)}`
-
   await clearChunks(id)
   await db.videos.put({
     id, title: video.title, author: video.author, authorId: video.authorId,
@@ -26,13 +20,9 @@ export async function downloadVideo(video, streamUrl, { onProgress, signal } = {
   let supportsRange = false
   let total = 0
 
-  // 1. Probe the file to see if it supports Range requests
+  // Probe the Railway backend to see if it supports Range
   try {
-    const probe = await fetch(proxyUrl, {
-      method: 'GET',
-      headers: { Range: 'bytes=0-0' },
-      signal
-    })
+    const probe = await fetch(streamUrl, { method: 'GET', headers: { Range: 'bytes=0-0' }, signal })
     if (probe.status === 206) {
       const cr = probe.headers.get('content-range') || ''
       const m = cr.match(/\/(\d+)/)
@@ -42,11 +32,8 @@ export async function downloadVideo(video, streamUrl, { onProgress, signal } = {
       total = parseInt(probe.headers.get('content-length') || '0', 10)
     }
     probe.body?.cancel?.().catch(() => {})
-  } catch (e) {
-    if (e.name === 'AbortError') throw e
-  }
+  } catch (e) { if (e.name === 'AbortError') throw e }
 
-  // 2. Download in chunks if Range is supported
   if (supportsRange && total > 0) {
     try {
       const numChunks = Math.ceil(total / CHUNK_SIZE)
@@ -56,12 +43,9 @@ export async function downloadVideo(video, streamUrl, { onProgress, signal } = {
         const start = seq * CHUNK_SIZE
         const end = Math.min(start + CHUNK_SIZE - 1, total - 1)
         
-        const res = await fetch(proxyUrl, {
-          headers: { Range: `bytes=${start}-${end}` },
-          signal
-        })
-        
+        const res = await fetch(streamUrl, { headers: { Range: `bytes=${start}-${end}` }, signal })
         if (!res.ok) throw new Error(`Chunk failed: ${res.status}`)
+        
         const blob = await res.blob()
         await db.chunks.add({ videoId: id, seq, blob })
         downloaded += blob.size
@@ -70,31 +54,25 @@ export async function downloadVideo(video, streamUrl, { onProgress, signal } = {
       await db.videos.update(id, { status: 'complete', progress: 1, size: total, downloadedAt: Date.now() })
       return { success: true, size: total }
     } catch (e) {
-      if (e.name === 'AbortError') {
-        await db.videos.update(id, { status: 'cancelled' })
-        throw e
-      }
+      if (e.name === 'AbortError') { await db.videos.update(id, { status: 'cancelled' }); throw e }
       await clearChunks(id)
     }
   }
 
-  // 3. Fallback: Full fetch (if Range is not supported)
-  const res = await fetch(proxyUrl, { signal })
+  // Fallback: Full fetch (if Railway or YouTube blocks Range)
+  const res = await fetch(streamUrl, { signal })
   if (!res.ok) throw new Error(`Fetch failed: ${res.status}`)
   const contentLength = parseInt(res.headers.get('content-length') || '0', 10)
   const reader = res.body.getReader()
   const parts = []
   let loaded = 0
-  
   while (true) {
     aborted(signal)
     const { done, value } = await reader.read()
     if (done) break
     parts.push(value)
     loaded += value.byteLength
-    if (contentLength) {
-      onProgress?.({ progress: loaded / contentLength, downloaded: loaded, total: contentLength })
-    }
+    if (contentLength) onProgress?.({ progress: loaded / contentLength, downloaded: loaded, total: contentLength })
   }
 
   const blob = new Blob(parts, { type: 'video/mp4' })
