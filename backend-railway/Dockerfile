@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y \
 # Install Deno (JavaScript runtime for YouTube challenges)
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
-# Install the nightly yt-dlp via pip (more reliable than tarball)
+# Install the nightly yt-dlp via pip
 RUN pip3 install --break-system-packages --force-reinstall --pre "yt-dlp[default]"
 
 # Install the POT provider plugin
@@ -35,5 +35,5 @@ ENV YTDLP=/usr/local/bin/yt-dlp
 ENV NODE_ENV=production
 EXPOSE 8080
 
-# Start the POT provider in the background, then start the server
-CMD ["sh", "-c", "deno run --allow-net --allow-io --allow-env --allow-run --allow-read --allow-write https://raw.githubusercontent.com/Brainicism/bgutil-ytdlp-pot-provider/master/server/src/main.ts & node server.js"]
+# THE FIX: Use --allow-all to ensure Deno starts the POT provider without permission errors
+CMD ["sh", "-c", "deno run --allow-all https://raw.githubusercontent.com/Brainicism/bgutil-ytdlp-pot-provider/master/server/src/main.ts & node server.js"]
