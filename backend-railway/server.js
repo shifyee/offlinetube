@@ -10,21 +10,26 @@ const execPromise = util.promisify(exec);
 const app = express();
 app.use(cors());
 
-// Path to your cookies file (if you decide to add one later)
 const COOKIES_FILE = '/app/cookies.txt';
 
 async function runYtDlp(args) {
   let lastError;
-  // Try multiple reliable clients in order
+  // Try the most reliable clients for high-res streams
   const clients = ['tv', 'mweb', 'android', 'ios'];
   
   for (const client of clients) {
-    // Add the POT provider argument and client-specific arguments
     const potArgs = `--extractor-args "youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416"`;
-    let cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
+    
+    // Check if cookies file exists and add it to the command
+    let cookieArgs = '';
+    if (fs.existsSync(COOKIES_FILE)) {
+      cookieArgs = `--cookies "${COOKIES_FILE}"`;
+      console.log(`Using cookies.txt for authentication.`);
+    }
+
     const fullArgs = `yt-dlp ${potArgs} ${cookieArgs} --extractor-args "youtube:player_client=${client}" ${args}`;
 
-    for (let i = 0; i < 2; i++) { // Retry each client once
+    for (let i = 0; i < 2; i++) {
       try {
         const { stdout, stderr } = await execPromise(fullArgs, { maxBuffer: 1024 * 1024 * 50 });
         if (stderr && stderr.includes('ERROR')) {
@@ -33,7 +38,7 @@ async function runYtDlp(args) {
         return stdout;
       } catch (e) {
         lastError = e;
-        console.warn(`yt-dlp attempt with ${client} failed (try ${i + 1}):`, e.message);
+        console.warn(`yt-dlp attempt with ${client} failed:`, e.message);
         if (e.stderr) console.error(`Full stderr (${client}):`, e.stderr);
         await new Promise(r => setTimeout(r, 2000));
       }
