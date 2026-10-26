@@ -2,6 +2,9 @@ const express = require('express');
 const cors = require('cors');
 const { exec } = require('child_process');
 const util = require('util');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 const execPromise = util.promisify(exec);
 
 const app = express();
@@ -13,40 +16,22 @@ app.get('/api/info', async (req, res) => {
 
   try {
     const url = `https://www.youtube.com/watch?v=${id}`;
-    
-    // THE FIX: Use the Android client to bypass YouTube blocks
+    // Just get basic metadata, no need for the full format dump here
     const cmd = `yt-dlp --extractor-args "youtube:player_client=android" --dump-json --no-playlist "${url}"`;
     const { stdout } = await execPromise(cmd, { maxBuffer: 1024 * 1024 * 10 });
     const info = JSON.parse(stdout);
 
-    // Filter for MP4 video with audio (best quality available)
-    let formats = info.formats
-      .filter(f => f.ext === 'mp4' && f.vcodec !== 'none' && f.acodec !== 'none')
-      .map(f => ({
-        qualityLabel: f.format_note || f.resolution || 'Video',
-        contentLength: f.filesize || f.filesize_approx,
-        container: 'mp4',
-        type: 'video/mp4',
-        format_id: f.format_id,
-        url: `/api/stream?id=${id}&format_id=${f.format_id}`
-      }));
-
-    // If no muxed formats are found, fallback to the best video format
-    if (formats.length === 0) {
-       formats = info.formats
-        .filter(f => f.ext === 'mp4')
-        .map(f => ({
-          qualityLabel: f.format_note || f.resolution || 'Video',
-          contentLength: f.filesize || f.filesize_approx,
-          container: 'mp4',
-          type: 'video/mp4',
-          format_id: f.format_id,
-          url: `/api/stream?id=${id}&format_id=${f.format_id}`
-        }));
-    }
-
-    // Sort highest quality first
-    formats.sort((a, b) => parseInt(b.qualityLabel) - parseInt(a.qualityLabel));
+    // We present these standard options to the user. 
+    // The backend will figure out how to merge them on the fly.
+    const formats = [
+      { qualityLabel: '1080p (HD)', format_id: '1080', container: 'mp4', type: 'video/mp4' },
+      { qualityLabel: '720p (HD)', format_id: '720', container: 'mp4', type: 'video/mp4' },
+      { qualityLabel: '480p', format_id: '480', container: 'mp4', type: 'video/mp4' },
+      { qualityLabel: '360p', format_id: '360', container: 'mp4', type: 'video/mp4' }
+    ].map(f => ({
+      ...f,
+      url: `/api/stream?id=${id}&quality=${f.format_id}`
+    }));
 
     return res.json({
       videoId: id,
@@ -66,37 +51,47 @@ app.get('/api/info', async (req, res) => {
 });
 
 app.get('/api/stream', async (req, res) => {
-  const { id, format_id } = req.query;
-  if (!id || !format_id) return res.status(400).send('Missing parameters');
+  const { id, quality } = req.query;
+  if (!id || !quality) return res.status(400).send('Missing parameters');
+
+  // Create a unique temp filename
+  const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
 
   try {
     const url = `https://www.youtube.com/watch?v=${id}`;
-    // Force the android client here as well
-    const cmd = `yt-dlp --extractor-args "youtube:player_client=android" -f ${format_id} -g "${url}"`;
-    const { stdout } = await execPromise(cmd);
-    const directUrl = stdout.trim();
+    
+    // The magic command: download best video up to requested quality, best audio, and merge them
+    const formatStr = `bestvideo[height<=${quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${quality}][ext=mp4]/best`;
+    const cmd = `yt-dlp --extractor-args "youtube:player_client=android" -f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`;
+    
+    console.log(`Downloading ${quality}p for ${id}...`);
+    await execPromise(cmd, { maxBuffer: 1024 * 1024 * 50 }); // Increase buffer for large merges
 
-    const headers = {};
-    if (req.headers.range) {
-      headers['Range'] = req.headers.range;
+    // Check if file exists
+    if (!fs.existsSync(tempFile)) {
+      throw new Error('Download failed, file not found');
     }
 
-    const response = await fetch(directUrl, { headers });
-
-    res.status(response.status);
-    response.headers.forEach((value, key) => {
-      if (!['content-encoding', 'transfer-encoding'].includes(key.toLowerCase())) {
-        res.setHeader(key, value);
-      }
-    });
+    const stat = fs.statSync(tempFile);
     
+    // Stream the file to the client
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
 
-    const arrayBuffer = await response.arrayBuffer();
-    res.send(Buffer.from(arrayBuffer));
+    const readStream = fs.createReadStream(tempFile);
+    readStream.pipe(res);
+
+    // Clean up the file after sending
+    readStream.on('end', () => {
+      fs.unlink(tempFile, (err) => {
+        if (err) console.error('Failed to delete temp file:', err);
+      });
+    });
 
   } catch (error) {
     console.error('yt-dlp stream error:', error);
+    if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
     if (!res.headersSent) res.status(500).send('Failed to stream video');
   }
 });
