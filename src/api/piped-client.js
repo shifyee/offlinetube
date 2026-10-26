@@ -6,8 +6,13 @@ const WORKER_URL = 'https://offline-tube-cors-proxy.logan-storrs.workers.dev';
 const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
   'https://pipedapi.nosebs.ru',
-  'https://pipedapi-libre.kavin.rocks',
   'https://api.piped.private.coffee'
+];
+
+const INVIDIOUS_INSTANCES = [
+  'https://invidious.f5.si',
+  'https://yewtu.be',
+  'https://inv.thepixora.com'
 ];
 
 async function fetchProxy(path) {
@@ -26,25 +31,6 @@ async function fetchProxy(path) {
   throw new Error(`All Piped instances failed`);
 }
 
-function getYTClient() {
-  return Innertube.create({
-    client_type: ClientType.TV_EMBEDDED,
-    retrieve_player: false,
-    generate_session_locally: true,
-    fetch: async (input, init = {}) => {
-      const url = typeof input === 'string' ? input : input.url;
-      if (!url || url === 'undefined') return new Response('{}', { status: 200 });
-      const proxyUrl = `${WORKER_URL}?url=${encodeURIComponent(url)}`;
-      const options = { ...init };
-      if (options.method === 'GET' || options.method === 'HEAD' || !options.method) {
-        delete options.body;
-      }
-      options.credentials = 'omit';
-      return fetch(proxyUrl, options);
-    }
-  });
-}
-
 function getThumbnail(videoId) {
   return [{ url: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg` }];
 }
@@ -52,13 +38,9 @@ function getThumbnail(videoId) {
 function mapPipedVideo(v) {
   const id = v.url ? v.url.replace('/watch?v=', '') : v.videoId;
   return {
-    videoId: id,
-    title: v.title || 'Untitled',
-    author: v.uploaderName || v.uploader || 'Unknown',
+    videoId: id, title: v.title || 'Untitled', author: v.uploaderName || v.uploader || 'Unknown',
     authorId: v.uploaderUrl ? v.uploaderUrl.replace('/channel/', '') : '',
-    authorAvatar: v.uploaderAvatar || null,
-    lengthSeconds: v.duration || 0,
-    videoThumbnails: getThumbnail(id)
+    authorAvatar: v.uploaderAvatar || null, lengthSeconds: v.duration || 0, videoThumbnails: getThumbnail(id)
   };
 }
 
@@ -68,52 +50,59 @@ export const api = {
       const data = await fetchProxy('/trending?region=US');
       if (Array.isArray(data)) return data.map(mapPipedVideo);
     } catch (e) {}
-    
-    // Fallback to youtubei.js search
-    try {
-      const yt = await getYTClient();
-      const results = await yt.search('trending videos', { type: 'video' });
-      return results.videos.map(v => ({
-        videoId: v.id, title: v.title?.toString() || '', author: v.author?.name || '',
-        authorId: v.author?.id || '', authorAvatar: v.author?.thumbnails?.[0]?.url || null,
-        lengthSeconds: v.duration?.seconds || 0, videoThumbnails: getThumbnail(v.id)
-      }));
-    } catch (e) { return []; }
+    return [];
   },
 
   search: async (q, type = 'video') => {
     try {
       const data = await fetchProxy(`/search?q=${encodeURIComponent(q)}&filter=${type === 'video' ? 'videos' : 'channels'}`);
       return (data.items || []).map(mapPipedVideo);
-    } catch (e) {
-      try {
-        const yt = await getYTClient();
-        const results = await yt.search(q, { type });
-        return results.videos.map(v => ({
-          videoId: v.id, title: v.title?.toString() || '', author: v.author?.name || '',
-          authorId: v.author?.id || '', authorAvatar: v.author?.thumbnails?.[0]?.url || null,
-          lengthSeconds: v.duration?.seconds || 0, videoThumbnails: getThumbnail(v.id)
-        }));
-      } catch (e) { return []; }
-    }
+    } catch (e) { return []; }
   },
 
   channel: async (id) => {
     try {
       const data = await fetchProxy(`/channel/${id}`);
       return {
-        author: data.name, authorId: id,
-        authorThumbnails: data.avatarUrl ? [{ url: data.avatarUrl }] : [],
+        author: data.name, authorId: id, authorThumbnails: data.avatarUrl ? [{ url: data.avatarUrl }] : [],
         subCount: data.subscriberCount || '0', description: data.description || '',
         latestVideos: (data.relatedStreams || []).map(mapPipedVideo)
       };
-    } catch (e) { 
-      return { author: 'Unknown', authorId: id, authorThumbnails: [], subCount: '0', description: '', latestVideos: [] }; 
-    }
+    } catch (e) { return { author: 'Unknown', authorId: id, authorThumbnails: [], subCount: '0', description: '', latestVideos: [] }; }
   },
 
   video: async (id) => {
-    // 1. Try Piped (Best for streams)
+    // 1. Try Invidious (Best for reliable streams)
+    for (const inv of INVIDIOUS_INSTANCES) {
+      try {
+        const targetUrl = `${inv}/api/v1/videos/${id}`;
+        const proxyUrl = `${WORKER_URL}?url=${encodeURIComponent(targetUrl)}`;
+        const res = await fetch(proxyUrl);
+        
+        if (res.ok) {
+          const data = await res.json();
+          if (data.error) continue;
+          
+          const formats = (data.formatStreams || []).map(s => ({
+            url: s.url.startsWith('http') ? s.url : `${inv}${s.url}`,
+            qualityLabel: s.qualityLabel || s.resolution || 'Video',
+            contentLength: s.size,
+            container: 'mp4',
+            type: 'video/mp4'
+          }));
+          
+          return {
+            videoId: id, title: data.title, author: data.author, authorId: data.authorId,
+            authorAvatar: data.authorThumbnails?.[0]?.url || null,
+            lengthSeconds: data.lengthSeconds, description: data.description,
+            videoThumbnails: getThumbnail(id), formatStreams: formats,
+            related: (data.recommendedVideos || []).map(v => ({ ...v, videoThumbnails: getThumbnail(v.videoId) }))
+          };
+        }
+      } catch (e) { /* try next instance */ }
+    }
+
+    // 2. Try Piped (Backup)
     try {
       const data = await fetchProxy(`/streams/${id}`);
       const proxyBase = data.proxyUrl || '';
@@ -124,30 +113,14 @@ export const api = {
           return { url: fullUrl, qualityLabel: s.quality, contentLength: s.contentLength, container: 'mp4', type: 'video/mp4' };
         });
       const related = (data.relatedStreams || []).map(mapPipedVideo).slice(0, 10);
-
-      return { 
-        videoId: id, title: data.title, author: data.uploader, authorId: data.uploaderUrl?.replace('/channel/', ''), 
-        authorAvatar: data.uploaderAvatar || null, lengthSeconds: data.duration, description: data.description, 
+      return {
+        videoId: id, title: data.title, author: data.uploader, authorId: data.uploaderUrl?.replace('/channel/', ''),
+        authorAvatar: data.uploaderAvatar || null, lengthSeconds: data.duration, description: data.description,
         videoThumbnails: getThumbnail(id), formatStreams: formats, related
       };
     } catch (e) {}
 
-    // 2. Fallback to youtubei.js (Backup for streams)
-    try {
-      const yt = await getYTClient();
-      const info = await yt.getInfo(id);
-      const formats = (info.streaming_data?.formats || [])
-        .filter(f => f.url)
-        .map(f => ({ url: f.url, qualityLabel: f.quality_label, contentLength: f.content_length, container: f.container, type: 'video/mp4' }));
-      
-      return { 
-        videoId: id, title: info.basic_info.title, author: info.basic_info.author, authorId: info.basic_info.channel_id, 
-        authorAvatar: info.basic_info.author?.thumbnails?.[0]?.url || null, lengthSeconds: info.basic_info.duration, 
-        description: info.basic_info.short_description, videoThumbnails: getThumbnail(id), formatStreams: formats, related: []
-      };
-    } catch (e) {}
-
-    // 3. Ultimate Fallback: oEmbed (Guaranteed metadata, no streams)
+    // 3. oEmbed Fallback
     try {
       const res = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`);
       if (res.ok) {
