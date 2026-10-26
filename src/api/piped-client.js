@@ -1,21 +1,19 @@
 // src/api/piped-client.js
 import { Innertube, ClientType } from 'youtubei.js';
 
-const WORKER_URL = 'https://offline-tube-cors-proxy.logan-storrs.workers.dev';
+const CORS_PROXY = 'https://corsproxy.io/?';
 
 function getYTClient() {
   return Innertube.create({
-    // Use TV_EMBEDDED for better compatibility and muxed streams
-    client_type: ClientType.TV_EMBEDDED,
-    retrieve_player: false, // Keep false to avoid player-related 400s
+    client_type: ClientType.IOS, // Use IOS client for better stream access
+    retrieve_player: false,
     generate_session_locally: true,
     fetch: async (input, init = {}) => {
       const url = typeof input === 'string' ? input : (input?.url || input?.href);
       if (!url || url === 'undefined') return new Response('{}', { status: 200 });
       
-      const proxyUrl = `${WORKER_URL}?url=${encodeURIComponent(url)}`;
+      const proxyUrl = `${CORS_PROXY}${encodeURIComponent(url)}`;
       const options = { ...init };
-      // The browser will throw if a GET/HEAD request has a body
       if (options.method === 'GET' || options.method === 'HEAD' || !options.method) {
         delete options.body;
       }
@@ -74,12 +72,12 @@ export const api = {
   },
 
   video: async (id) => {
-    // Use getBasicInfo to only fetch streams, avoiding the broken /next endpoint
     try {
       const yt = await getYTClient();
-      const basicInfo = await yt.getBasicInfo(id);
+      // Use getInfo instead of getBasicInfo to ensure streams are fetched
+      const info = await yt.getInfo(id);
       
-      const formats = (basicInfo.streaming_data?.formats || [])
+      const formats = (info.streaming_data?.formats || [])
         .filter(f => f.url)
         .map(f => ({ 
           url: f.url, 
@@ -91,34 +89,39 @@ export const api = {
 
       return { 
         videoId: id, 
-        title: basicInfo.basic_info.title, 
-        author: basicInfo.basic_info.author, 
-        authorId: basicInfo.basic_info.channel_id, 
-        authorAvatar: basicInfo.basic_info.author?.thumbnails?.[0]?.url || null,
-        lengthSeconds: basicInfo.basic_info.duration, 
-        description: basicInfo.basic_info.short_description, 
+        title: info.basic_info.title, 
+        author: info.basic_info.author, 
+        authorId: info.basic_info.channel_id, 
+        authorAvatar: info.basic_info.author?.thumbnails?.[0]?.url || null,
+        lengthSeconds: info.basic_info.duration, 
+        description: info.basic_info.short_description, 
         videoThumbnails: getThumbnail(id), 
         formatStreams: formats,
-        related: [] 
+        related: (info.watch_next_feed || [])
+          .filter(v => v.type === 'CompactVideo')
+          .map(v => ({
+            videoId: v.id, title: v.title?.toString() || '', author: v.author?.name || '',
+            authorId: v.author?.id || '', authorAvatar: v.author?.thumbnails?.[0]?.url || null,
+            lengthSeconds: v.duration?.seconds || 0, videoThumbnails: getThumbnail(v.id)
+          })).slice(0, 10)
       };
     } catch (e) {
-      console.warn('getBasicInfo failed, falling back to oEmbed.', e);
+      console.error('Video fetch failed:', e);
+      // Fallback to oEmbed for metadata
+      try {
+        const res = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`);
+        if (res.ok) {
+          const data = await res.json();
+          return {
+            videoId: id, title: data.title, author: data.author_name, authorId: '',
+            authorAvatar: null, lengthSeconds: 0, description: 'Metadata loaded via fallback.',
+            videoThumbnails: [{ url: data.thumbnail_url }], formatStreams: [], related: []
+          };
+        }
+      } catch (err) {}
+      
+      return { videoId: id, title: 'Video', author: 'Unknown', authorId: '', authorAvatar: null, lengthSeconds: 0, description: '', videoThumbnails: getThumbnail(id), formatStreams: [], related: [] };
     }
-
-    // Final fallback to oEmbed (metadata only, no streams)
-    try {
-      const res = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`);
-      if (res.ok) {
-        const data = await res.json();
-        return {
-          videoId: id, title: data.title, author: data.author_name, authorId: '',
-          authorAvatar: null, lengthSeconds: 0, description: 'Metadata loaded via fallback.',
-          videoThumbnails: [{ url: data.thumbnail_url }], formatStreams: [], related: []
-        };
-      }
-    } catch (err) { /* ignore */ }
-
-    return { videoId: id, title: 'Video', author: 'Unknown', authorId: '', authorAvatar: null, lengthSeconds: 0, description: '', videoThumbnails: getThumbnail(id), formatStreams: [], related: [] };
   },
 
   comments: async (id) => {
