@@ -10,17 +10,19 @@ const execPromise = util.promisify(exec);
 const app = express();
 app.use(cors());
 
-// Helper to run yt-dlp with retries
 async function runYtDlp(args) {
   let lastError;
   for (let i = 0; i < 3; i++) {
     try {
-      const { stdout } = await execPromise(args, { maxBuffer: 1024 * 1024 * 50 });
+      const { stdout, stderr } = await execPromise(args, { maxBuffer: 1024 * 1024 * 50 });
+      if (stderr && stderr.includes('ERROR')) {
+        console.warn('yt-dlp stderr:', stderr);
+      }
       return stdout;
     } catch (e) {
       lastError = e;
       console.warn(`yt-dlp attempt ${i + 1} failed:`, e.message);
-      // Wait 2 seconds before retrying
+      if (e.stderr) console.error('Full stderr:', e.stderr);
       await new Promise(r => setTimeout(r, 2000));
     }
   }
@@ -33,13 +35,11 @@ app.get('/api/info', async (req, res) => {
 
   try {
     const url = `https://www.youtube.com/watch?v=${id}`;
-    
-    // Use the default client rotation instead of forcing a single client
-    const cmd = `yt-dlp --dump-json --no-playlist "${url}"`;
+    // Use mweb client as recommended for PO token scenarios
+    const cmd = `yt-dlp --extractor-args "youtube:player_client=mweb" --dump-json --no-playlist "${url}"`;
     const stdout = await runYtDlp(cmd);
     const info = JSON.parse(stdout);
 
-    // Extract available heights
     const availableHeights = new Set();
     info.formats.forEach(f => {
       if (f.vcodec !== 'none' && f.height) {
@@ -70,7 +70,7 @@ app.get('/api/info', async (req, res) => {
     });
   } catch (error) {
     console.error('yt-dlp metadata error:', error);
-    return res.status(500).json({ error: 'Failed to fetch video info' });
+    return res.status(500).json({ error: 'Failed to fetch video info', details: error.message });
   }
 });
 
@@ -82,11 +82,9 @@ app.get('/api/stream', async (req, res) => {
 
   try {
     const url = `https://www.youtube.com/watch?v=${id}`;
-    
-    // bv* + ba ensures we get the best video and audio, merging with ffmpeg
     const formatStr = `bv*[height<=${height}]+ba/b[height<=${height}]/b`;
     
-    const cmd = `yt-dlp -f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`;
+    const cmd = `yt-dlp --extractor-args "youtube:player_client=mweb" -f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`;
     
     console.log(`Downloading ${height}p for ${id}...`);
     await runYtDlp(cmd);
