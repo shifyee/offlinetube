@@ -1,18 +1,18 @@
 // src/api/piped-client.js
 import { Innertube, ClientType } from 'youtubei.js';
 
-const CORS_PROXY = 'https://corsproxy.io/?';
+const WORKER_URL = 'https://offline-tube-cors-proxy.logan-storrs.workers.dev';
 
 function getYTClient() {
   return Innertube.create({
-    client_type: ClientType.IOS, // Use IOS client for better stream access
+    client_type: ClientType.IOS, // IOS client is more resilient and doesn't require PoTokens
     retrieve_player: false,
     generate_session_locally: true,
     fetch: async (input, init = {}) => {
       const url = typeof input === 'string' ? input : (input?.url || input?.href);
       if (!url || url === 'undefined') return new Response('{}', { status: 200 });
       
-      const proxyUrl = `${CORS_PROXY}${encodeURIComponent(url)}`;
+      const proxyUrl = `${WORKER_URL}?url=${encodeURIComponent(url)}`;
       const options = { ...init };
       if (options.method === 'GET' || options.method === 'HEAD' || !options.method) {
         delete options.body;
@@ -74,7 +74,6 @@ export const api = {
   video: async (id) => {
     try {
       const yt = await getYTClient();
-      // Use getInfo instead of getBasicInfo to ensure streams are fetched
       const info = await yt.getInfo(id);
       
       const formats = (info.streaming_data?.formats || [])
@@ -107,7 +106,6 @@ export const api = {
       };
     } catch (e) {
       console.error('Video fetch failed:', e);
-      // Fallback to oEmbed for metadata
       try {
         const res = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`);
         if (res.ok) {
@@ -119,7 +117,6 @@ export const api = {
           };
         }
       } catch (err) {}
-      
       return { videoId: id, title: 'Video', author: 'Unknown', authorId: '', authorAvatar: null, lengthSeconds: 0, description: '', videoThumbnails: getThumbnail(id), formatStreams: [], related: [] };
     }
   },
