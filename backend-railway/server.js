@@ -14,34 +14,23 @@ const COOKIES_FILE = '/app/cookies.txt';
 
 async function runYtDlp(args) {
   let lastError;
-  // Try the most reliable clients for high-res streams
-  const clients = ['tv', 'mweb', 'android', 'ios'];
+  // Try the most reliable clients
+  const clients = ['web_creator', 'mweb', 'android', 'ios'];
   
   for (const client of clients) {
-    const potArgs = `--extractor-args "youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416"`;
-    
-    // Check if cookies file exists and add it to the command
     let cookieArgs = '';
     if (fs.existsSync(COOKIES_FILE)) {
       cookieArgs = `--cookies "${COOKIES_FILE}"`;
-      console.log(`Using cookies.txt for authentication.`);
     }
 
-    const fullArgs = `yt-dlp ${potArgs} ${cookieArgs} --extractor-args "youtube:player_client=${client}" ${args}`;
+    const fullArgs = `yt-dlp ${cookieArgs} --extractor-args "youtube:player_client=${client}" ${args}`;
 
-    for (let i = 0; i < 2; i++) {
-      try {
-        const { stdout, stderr } = await execPromise(fullArgs, { maxBuffer: 1024 * 1024 * 50 });
-        if (stderr && stderr.includes('ERROR')) {
-          console.warn(`yt-dlp stderr (${client}):`, stderr);
-        }
-        return stdout;
-      } catch (e) {
-        lastError = e;
-        console.warn(`yt-dlp attempt with ${client} failed:`, e.message);
-        if (e.stderr) console.error(`Full stderr (${client}):`, e.stderr);
-        await new Promise(r => setTimeout(r, 2000));
-      }
+    try {
+      const { stdout, stderr } = await execPromise(fullArgs, { maxBuffer: 1024 * 1024 * 50 });
+      return stdout;
+    } catch (e) {
+      lastError = e;
+      console.warn(`yt-dlp attempt with ${client} failed:`, e.message);
     }
   }
   
@@ -88,7 +77,12 @@ app.get('/api/info', async (req, res) => {
     });
   } catch (error) {
     console.error('yt-dlp metadata error:', error);
-    return res.status(500).json({ error: 'Failed to fetch video info', details: error.message });
+    // THIS IS THE FIX: Send the actual error message to the frontend
+    return res.status(500).json({ 
+      error: 'Backend failed to fetch video', 
+      details: error.message,
+      stderr: error.stderr || 'No stderr available'
+    });
   }
 });
 
@@ -107,7 +101,6 @@ app.get('/api/stream', async (req, res) => {
     if (!fs.existsSync(tempFile)) throw new Error('Download failed, file not found');
 
     const stat = fs.statSync(tempFile);
-    console.log(`Success! File size: ${(stat.size / 1024 / 1024).toFixed(2)} MB`);
     
     res.setHeader('Content-Length', stat.size);
     res.setHeader('Content-Type', 'video/mp4');
