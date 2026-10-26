@@ -68,7 +68,7 @@ app.get('/api/info', async (req, res) => {
     if (startIdx !== -1 && endIdx !== -1) {
       jsonString = jsonString.substring(startIdx, endIdx + 1);
     } else {
-      throw new Error(`Failed to parse JSON. Raw output: ${stdout.substring(0, 100)}...`);
+      throw new Error(`Failed to parse JSON.`);
     }
 
     const info = JSON.parse(jsonString);
@@ -120,7 +120,12 @@ app.get('/api/stream', async (req, res) => {
 
   try {
     const url = `https://www.youtube.com/watch?v=${id}`;
-    const formatStr = `bv*[height<=${height}]+ba/b[height<=${height}]/b`;
+    
+    // THE FIX: More robust fallback chain
+    // 1. Best video up to requested height + best audio
+    // 2. If that fails, best video + best audio
+    // 3. If that fails, absolute best combined stream
+    const formatStr = `bv*[height<=${height}]+ba/b/bv*+ba/b`;
     
     await runYtDlp(`-f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`);
 
