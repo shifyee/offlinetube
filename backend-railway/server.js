@@ -12,15 +12,25 @@ app.use(cors());
 
 const COOKIES_FILE = '/tmp/cookies.txt';
 
-// 1. Safely write cookies to file, fixing newline issues from env vars
 if (process.env.YOUTUBE_COOKIES) {
   try {
-    // Replace literal \n strings with actual newlines, and convert CRLF to LF
-    const cookiesContent = process.env.YOUTUBE_COOKIES
+    // 1. Fix newlines (replace literal \n strings and CRLF with LF)
+    let cookiesContent = process.env.YOUTUBE_COOKIES
       .replace(/\\n/g, '\n')
       .replace(/\r\n/g, '\n');
+
+    // 2. Fix tabs. Netscape cookies require literal tab characters, 
+    // but env variables often convert them to spaces. 
+    // We replace sequences of spaces with a single tab.
+    // We do this only on lines that aren't comments.
+    cookiesContent = cookiesContent.split('\n').map(line => {
+      if (line.startsWith('#') || line.trim() === '') return line;
+      // Replace 2 or more spaces with a single tab
+      return line.replace(/ {2,}/g, '\t');
+    }).join('\n');
+
     fs.writeFileSync(COOKIES_FILE, cookiesContent);
-    console.log('Successfully loaded cookies from environment variable.');
+    console.log('Successfully loaded and formatted cookies from environment variable.');
   } catch (e) {
     console.error('Failed to write cookies file:', e);
   }
@@ -30,12 +40,10 @@ if (process.env.YOUTUBE_COOKIES) {
 
 async function runYtDlp(args) {
   let lastError;
-  // 2. Removed 'ios' because it drops cookies. 'tv' and 'mweb' are the most reliable with cookies.
   const clients = ['tv', 'mweb', 'web_creator', 'android'];
   
   for (const client of clients) {
     let cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
-    // 3. Added --no-warnings to keep stdout clean for JSON parsing
     const fullArgs = `yt-dlp ${cookieArgs} --no-warnings --extractor-args "youtube:player_client=${client}" ${args}`;
 
     try {
@@ -58,7 +66,6 @@ app.get('/api/info', async (req, res) => {
     const url = `https://www.youtube.com/watch?v=${id}`;
     const stdout = await runYtDlp(`--dump-json --no-playlist "${url}"`);
     
-    // 4. Robust JSON parsing: extract only the JSON object from stdout
     let jsonString = stdout.trim();
     const startIdx = jsonString.indexOf('{');
     const endIdx = jsonString.lastIndexOf('}');
