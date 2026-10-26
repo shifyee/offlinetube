@@ -32,15 +32,16 @@ if (process.env.YOUTUBE_COOKIES) {
   console.warn('No YOUTUBE_COOKIES environment variable found.');
 }
 
-// Updated runYtDlp with retry logic for the "page needs to be reloaded" error
 async function runYtDlp(args) {
   let lastError;
-  // Use clients known to respect cookies better than 'ios'
-  const clients = ['tv', 'web_creator', 'android', 'mweb'];
+  // Prioritize 'web' as it supports cookies and high-res, then fallbacks
+  const clients = ['web', 'web_creator', 'tv', 'ios'];
   
   for (const client of clients) {
     let cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
-    const fullArgs = `yt-dlp ${cookieArgs} --no-warnings --extractor-args "youtube:player_client=${client}" ${args}`;
+    // Use the POT provider to generate tokens for the web client
+    const potArgs = '--extractor-args "youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416"';
+    const fullArgs = `yt-dlp ${cookieArgs} --no-warnings ${potArgs} --extractor-args "youtube:player_client=${client}" ${args}`;
 
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
@@ -51,14 +52,12 @@ async function runYtDlp(args) {
         lastError = e;
         const errorMsg = e.message || '';
         
-        // If it's the specific transient error, wait and retry
         if (errorMsg.includes('The page needs to be reloaded')) {
           console.warn(`[Retry ${attempt}/3] "page needs to be reloaded" with ${client}. Waiting 2s...`);
           await new Promise(r => setTimeout(r, 2000));
           continue;
         }
 
-        // If it's another error, move to the next client
         console.warn(`yt-dlp attempt with ${client} failed:`, errorMsg);
         if (e.stderr) console.error(`Full stderr (${client}):`, e.stderr);
         break; 
