@@ -1,134 +1,40 @@
 // src/api/piped-client.js
-import { Innertube, ClientType } from 'youtubei.js';
 
-const WORKER_URL = 'https://offline-tube-cors-proxy.logan-storrs.workers.dev';
-
-function getYTClient() {
-  return Innertube.create({
-    client_type: ClientType.TV_EMBEDDED, // TV_EMBEDDED is more resilient
-    retrieve_player: false,
-    generate_session_locally: true,
-    fetch: async (input, init = {}) => {
-      const url = typeof input === 'string' ? input : (input?.url || input?.href);
-      if (!url || url === 'undefined') return new Response('{}', { status: 200 });
-      
-      const proxyUrl = `${WORKER_URL}?url=${encodeURIComponent(url)}`;
-      const options = { ...init };
-      if (options.method === 'GET' || options.method === 'HEAD' || !options.method) {
-        delete options.body;
-      }
-      options.credentials = 'omit';
-      return fetch(proxyUrl, options);
-    }
-  });
-}
+// PASTE YOUR RAILWAY URL HERE (NO trailing slash)
+const RAILWAY_BACKEND = 'https://your-railway-app.up.railway.app';
 
 function getThumbnail(videoId) {
   return [{ url: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg` }];
 }
 
 export const api = {
-  popular: async () => {
-    try {
-      const yt = await getYTClient();
-      const results = await yt.search('trending videos', { type: 'video' });
-      return results.videos.map(v => ({
-        videoId: v.id, title: v.title?.toString() || '', author: v.author?.name || '',
-        authorId: v.author?.id || '', authorAvatar: v.author?.thumbnails?.[0]?.url || null,
-        lengthSeconds: v.duration?.seconds || 0, videoThumbnails: getThumbnail(v.id)
-      }));
-    } catch (e) { return []; }
-  },
-
-  search: async (q, type = 'video') => {
-    try {
-      const yt = await getYTClient();
-      const results = await yt.search(q, { type });
-      return (results.videos || []).map(v => ({
-        videoId: v.id, title: v.title?.toString() || '', author: v.author?.name || '',
-        authorId: v.author?.id || '', authorAvatar: v.author?.thumbnails?.[0]?.url || null,
-        lengthSeconds: v.duration?.seconds || 0, videoThumbnails: getThumbnail(v.id)
-      }));
-    } catch (e) { return []; }
-  },
-
-  channel: async (id) => {
-    try {
-      const yt = await getYTClient();
-      const channel = await yt.getChannel(id);
-      const videos = await channel.videos.next();
-      return {
-        author: channel.header.author.name, authorId: id,
-        authorThumbnails: channel.header.author.thumbnails || [],
-        subCount: channel.header.subscriber_count?.text || 'Unknown',
-        description: channel.metadata.description || '',
-        latestVideos: videos.videos.map(v => ({
-          videoId: v.id, title: v.title?.toString() || '', author: v.author?.name || '',
-          authorId: v.author?.id || '', authorAvatar: v.author?.thumbnails?.[0]?.url || null,
-          lengthSeconds: v.duration?.seconds || 0, videoThumbnails: getThumbnail(v.id)
-        }))
-      };
-    } catch (e) { return { author: 'Unknown', authorId: id, authorThumbnails: [], subCount: '0', description: '', latestVideos: [] }; }
-  },
-
+  // The Downloader page will use this
   video: async (id) => {
-    // Use getBasicInfo to ONLY fetch streams, avoiding the broken /next endpoint
     try {
-      const yt = await getYTClient();
-      const basicInfo = await yt.getBasicInfo(id);
+      const res = await fetch(`${RAILWAY_BACKEND}/api/info?id=${id}`);
+      if (!res.ok) throw new Error(`Backend error: ${res.status}`);
+      const data = await res.json();
       
-      // THE WORKAROUND: Add the CgIQBg parameter to bypass the 400/403 block
-      const playerResponse = await basicInfo.download();
-      
-      const formats = (playerResponse.streaming_data?.formats || [])
-        .filter(f => f.url)
-        .map(f => ({ 
-          url: f.url, 
-          qualityLabel: f.quality_label, 
-          contentLength: f.content_length, 
-          container: f.container, 
-          type: 'video/mp4' 
+      // yt-dlp returns URLs as relative paths (/api/stream...). We need to make them absolute.
+      if (data.formatStreams) {
+        data.formatStreams = data.formatStreams.map(f => ({
+          ...f,
+          url: `${RAILWAY_BACKEND}${f.url}`
         }));
-
-      return { 
-        videoId: id, 
-        title: basicInfo.basic_info.title, 
-        author: basicInfo.basic_info.author, 
-        authorId: basicInfo.basic_info.channel_id, 
-        authorAvatar: basicInfo.basic_info.author?.thumbnails?.[0]?.url || null,
-        lengthSeconds: basicInfo.basic_info.duration, 
-        description: basicInfo.basic_info.short_description, 
-        videoThumbnails: getThumbnail(id), 
-        formatStreams: formats,
-        related: [] // No related videos when using getBasicInfo
-      };
-    } catch (e) {
-      console.warn('getBasicInfo failed, falling back to oEmbed.', e);
-    }
-
-    // Final fallback to oEmbed (metadata only, no streams)
-    try {
-      const res = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`);
-      if (res.ok) {
-        const data = await res.json();
-        return {
-          videoId: id, title: data.title, author: data.author_name, authorId: '',
-          authorAvatar: null, lengthSeconds: 0, description: 'Metadata loaded via fallback.',
-          videoThumbnails: [{ url: data.thumbnail_url }], formatStreams: [], related: []
-        };
       }
-    } catch (err) { /* ignore */ }
-
-    return { videoId: id, title: 'Video', author: 'Unknown', authorId: '', authorAvatar: null, lengthSeconds: 0, description: '', videoThumbnails: getThumbnail(id), formatStreams: [], related: [] };
+      
+      return data;
+    } catch (e) {
+      console.error('Video fetch failed:', e);
+      return { videoId: id, title: 'Video', author: 'Unknown', authorId: '', authorAvatar: null, lengthSeconds: 0, description: '', videoThumbnails: getThumbnail(id), formatStreams: [], related: [] };
+    }
   },
-
-  comments: async (id) => {
-    try {
-      const yt = await getYTClient();
-      const comments = await yt.getComments(id);
-      return comments.contents.map(c => ({ commentId: c.comment_id, author: c.author.name, content: c.content.toString() }));
-    } catch (e) { return []; }
-  }
+  
+  // Placeholder functions for other pages to prevent crashes
+  popular: async () => { return []; },
+  search: async () => { return []; },
+  channel: async () => { return { author: 'Unknown', latestVideos: [] }; },
+  comments: async () => { return []; }
 };
 
 export function resolveUrl(u) { return u; }
