@@ -28,11 +28,9 @@ function getThumbnail(videoId) {
   return [{ url: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg` }];
 }
 
-// Keep Piped for the Home feed if it works, but default to YouTube if it fails
 export const api = {
   popular: async () => {
     try {
-      // Try to get a generic feed using youtubei.js search
       const yt = await getYTClient();
       const results = await yt.search('trending videos', { type: 'video' });
       return results.videos.map(v => ({
@@ -74,9 +72,9 @@ export const api = {
     } catch (e) { return { author: 'Unknown', authorId: id, authorThumbnails: [], subCount: '0', description: '', latestVideos: [] }; }
   },
 
-  // This is the critical function for the Downloader
   video: async (id) => {
     try {
+      // Directly use youtubei.js to get metadata and streams
       const yt = await getYTClient();
       const info = await yt.getInfo(id);
       
