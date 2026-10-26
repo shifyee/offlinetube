@@ -10,19 +10,28 @@ const execPromise = util.promisify(exec);
 const app = express();
 app.use(cors());
 
-const COOKIES_FILE = '/app/cookies.txt';
+// The path where we will save the cookies from the environment variable
+const COOKIES_FILE = '/tmp/cookies.txt';
+
+// At startup, check if the cookies variable exists and write it to a file
+if (process.env.YOUTUBE_COOKIES) {
+  try {
+    fs.writeFileSync(COOKIES_FILE, process.env.YOUTUBE_COOKIES);
+    console.log('Successfully loaded cookies from environment variable.');
+  } catch (e) {
+    console.error('Failed to write cookies file:', e);
+  }
+} else {
+  console.warn('No YOUTUBE_COOKIES environment variable found. Downloads may be restricted.');
+}
 
 async function runYtDlp(args) {
   let lastError;
-  // Try the most reliable clients
-  const clients = ['web_creator', 'mweb', 'android', 'ios'];
+  const clients = ['tv', 'mweb', 'android', 'ios'];
   
   for (const client of clients) {
-    let cookieArgs = '';
-    if (fs.existsSync(COOKIES_FILE)) {
-      cookieArgs = `--cookies "${COOKIES_FILE}"`;
-    }
-
+    // If the cookies file exists, use it
+    let cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
     const fullArgs = `yt-dlp ${cookieArgs} --extractor-args "youtube:player_client=${client}" ${args}`;
 
     try {
@@ -33,7 +42,6 @@ async function runYtDlp(args) {
       console.warn(`yt-dlp attempt with ${client} failed:`, e.message);
     }
   }
-  
   throw lastError;
 }
 
@@ -77,12 +85,7 @@ app.get('/api/info', async (req, res) => {
     });
   } catch (error) {
     console.error('yt-dlp metadata error:', error);
-    // THIS IS THE FIX: Send the actual error message to the frontend
-    return res.status(500).json({ 
-      error: 'Backend failed to fetch video', 
-      details: error.message,
-      stderr: error.stderr || 'No stderr available'
-    });
+    return res.status(500).json({ error: 'Backend failed', details: error.message });
   }
 });
 
