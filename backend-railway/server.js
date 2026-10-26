@@ -16,21 +16,30 @@ app.get('/api/info', async (req, res) => {
 
   try {
     const url = `https://www.youtube.com/watch?v=${id}`;
-    // Just get basic metadata, no need for the full format dump here
-    const cmd = `yt-dlp --extractor-args "youtube:player_client=android" --dump-json --no-playlist "${url}"`;
+    
+    // 1. Get metadata and all available formats using the ios client
+    const cmd = `yt-dlp --extractor-args "youtube:player_client=ios" --dump-json --no-playlist "${url}"`;
     const { stdout } = await execPromise(cmd, { maxBuffer: 1024 * 1024 * 10 });
     const info = JSON.parse(stdout);
 
-    // We present these standard options to the user. 
-    // The backend will figure out how to merge them on the fly.
-    const formats = [
-      { qualityLabel: '1080p (HD)', format_id: '1080', container: 'mp4', type: 'video/mp4' },
-      { qualityLabel: '720p (HD)', format_id: '720', container: 'mp4', type: 'video/mp4' },
-      { qualityLabel: '480p', format_id: '480', container: 'mp4', type: 'video/mp4' },
-      { qualityLabel: '360p', format_id: '360', container: 'mp4', type: 'video/mp4' }
-    ].map(f => ({
-      ...f,
-      url: `/api/stream?id=${id}&quality=${f.format_id}`
+    // 2. Extract unique video heights (resolutions) from the available formats
+    const availableHeights = new Set();
+    info.formats.forEach(f => {
+      if (f.vcodec !== 'none' && f.height) {
+        availableHeights.add(f.height);
+      }
+    });
+
+    // 3. Sort them from highest to lowest
+    const sortedHeights = Array.from(availableHeights).sort((a, b) => b - a);
+
+    // 4. Build the UI options dynamically based on what actually exists
+    const formats = sortedHeights.map(h => ({
+      qualityLabel: `${h}p`,
+      height: h,
+      container: 'mp4', // We will force merge to MP4
+      type: 'video/mp4',
+      url: `/api/stream?id=${id}&height=${h}`
     }));
 
     return res.json({
@@ -51,30 +60,36 @@ app.get('/api/info', async (req, res) => {
 });
 
 app.get('/api/stream', async (req, res) => {
-  const { id, quality } = req.query;
-  if (!id || !quality) return res.status(400).send('Missing parameters');
+  const { id, height } = req.query;
+  if (!id || !height) return res.status(400).send('Missing parameters');
 
-  // Create a unique temp filename
   const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
 
   try {
     const url = `https://www.youtube.com/watch?v=${id}`;
     
-    // The magic command: download best video up to requested quality, best audio, and merge them
-    const formatStr = `bestvideo[height<=${quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${quality}][ext=mp4]/best`;
-    const cmd = `yt-dlp --extractor-args "youtube:player_client=android" -f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`;
+    // THE FIX: 
+    // bv* means "best video regardless of codec"
+    // ba means "best audio"
+    // The slash / means "or fallback to best muxed if above fails"
+    // We use the ios client to get high-quality streams
+    const formatStr = `bv*[height<=${height}]+ba/b[height<=${height}]/b`;
     
-    console.log(`Downloading ${quality}p for ${id}...`);
-    await execPromise(cmd, { maxBuffer: 1024 * 1024 * 50 }); // Increase buffer for large merges
+    // Download, merge into an MP4 container, and save to temp file
+    const cmd = `yt-dlp --extractor-args "youtube:player_client=ios" -f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`;
+    
+    console.log(`Downloading true ${height}p for ${id}...`);
+    
+    // Allow up to 5 minutes for large downloads/merges
+    await execPromise(cmd, { maxBuffer: 1024 * 1024 * 100, timeout: 300000 });
 
-    // Check if file exists
     if (!fs.existsSync(tempFile)) {
       throw new Error('Download failed, file not found');
     }
 
     const stat = fs.statSync(tempFile);
+    console.log(`Success! File size: ${(stat.size / 1024 / 1024).toFixed(2)} MB`);
     
-    // Stream the file to the client
     res.setHeader('Content-Length', stat.size);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
@@ -82,7 +97,6 @@ app.get('/api/stream', async (req, res) => {
     const readStream = fs.createReadStream(tempFile);
     readStream.pipe(res);
 
-    // Clean up the file after sending
     readStream.on('end', () => {
       fs.unlink(tempFile, (err) => {
         if (err) console.error('Failed to delete temp file:', err);
