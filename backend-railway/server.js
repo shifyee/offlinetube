@@ -32,16 +32,16 @@ if (process.env.YOUTUBE_COOKIES) {
   console.warn('No YOUTUBE_COOKIES environment variable found.');
 }
 
-// Universal yt-dlp command builder
 function buildYtDlpCmd(args, client = 'default') {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
+  
+  // THE FIX: Force SABR formats and disable EJS checks that cause issues on Railway
   const extractorArgs = [
-    'youtube:formats=duplicate',
-    'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416',
+    'youtube:formats=sabr',          // Force SABR formats
+    'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416', // POT provider
     `youtube:player_client=${client}`
   ].join(';');
 
-  // --force-ipv4 often fixes Railway networking issues
   return `yt-dlp ${cookieArgs} --no-warnings --no-check-certificates --force-ipv4 --extractor-args "${extractorArgs}" ${args}`;
 }
 
@@ -72,7 +72,7 @@ app.get('/api/info', async (req, res) => {
   let metadata = null;
   let lastError = null;
 
-  // 1. Fetch Metadata using --print (avoids --dump-json failures)
+  // 1. Fetch Metadata using --print (never fails due to SABR)
   for (const client of clients) {
     try {
       const stdout = await runYtDlp(
@@ -102,7 +102,7 @@ app.get('/api/info', async (req, res) => {
     });
   }
 
-  // 2. Fetch Resolutions using --list-formats
+  // 2. Fetch Resolutions using --list-formats (now that SABR is forced)
   let formats = [];
   try {
     const listStdout = await runYtDlp(`--list-formats "${url}"`, 'default');
@@ -158,8 +158,8 @@ app.get('/api/stream', async (req, res) => {
   const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
-  // The most unbreakable format selector
-  const formatStr = 'bestvideo+bestaudio/best';
+  // THE FIX: Use best[ext=mp4]/best to avoid SABR 403 on explicit selectors
+  const formatStr = 'best[ext=mp4]/best';
   const clients = ['default', 'web', 'tv', 'android', 'ios', 'mweb', 'web_safari'];
   
   let success = false;
