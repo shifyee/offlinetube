@@ -7,7 +7,7 @@ export default defineConfig({
     vue(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg'],
+      includeAssets: ['favicon.svg', 'pwa-192x192.png', 'pwa-512x512.png'],
       manifest: {
         name: 'Offline Tube',
         short_name: 'OfflineTube',
@@ -18,38 +18,16 @@ export default defineConfig({
         start_url: '/',
         scope: '/',
         icons: [
-          { src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
-          { src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' }
+          { src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+          { src: '/pwa-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }
         ]
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff,woff2}'],
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
-        runtimeCaching: [
-          {
-            urlPattern: ({ url }) => url.pathname.startsWith('/api/v1/'),
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'invidious-api',
-              networkTimeoutSeconds: 6,
-              expiration: { maxEntries: 100, maxAgeSeconds: 3600 }
-            }
-          },
-          {
-            urlPattern: ({ url }) =>
-              url.pathname.startsWith('/vi/') || url.hostname.endsWith('ytimg.com'),
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'thumbnails',
-              expiration: { maxEntries: 800, maxAgeSeconds: 7 * 24 * 3600 }
-            }
-          }
-        ]
+        runtimeCaching: []
       }
     })
-  ],
-  optimizeDeps: {
-    include: ['shaka-player/dist/shaka-player.compiled.js']
-  }
+  ]
 })
