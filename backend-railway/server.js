@@ -10,32 +10,37 @@ const execPromise = util.promisify(exec);
 const app = express();
 app.use(cors());
 
-// The path where we will save the cookies from the environment variable
 const COOKIES_FILE = '/tmp/cookies.txt';
 
-// At startup, check if the cookies variable exists and write it to a file
+// 1. Safely write cookies to file, fixing newline issues from env vars
 if (process.env.YOUTUBE_COOKIES) {
   try {
-    fs.writeFileSync(COOKIES_FILE, process.env.YOUTUBE_COOKIES);
+    // Replace literal \n strings with actual newlines, and convert CRLF to LF
+    const cookiesContent = process.env.YOUTUBE_COOKIES
+      .replace(/\\n/g, '\n')
+      .replace(/\r\n/g, '\n');
+    fs.writeFileSync(COOKIES_FILE, cookiesContent);
     console.log('Successfully loaded cookies from environment variable.');
   } catch (e) {
     console.error('Failed to write cookies file:', e);
   }
 } else {
-  console.warn('No YOUTUBE_COOKIES environment variable found. Downloads may be restricted.');
+  console.warn('No YOUTUBE_COOKIES environment variable found.');
 }
 
 async function runYtDlp(args) {
   let lastError;
-  const clients = ['tv', 'mweb', 'android', 'ios'];
+  // 2. Removed 'ios' because it drops cookies. 'tv' and 'mweb' are the most reliable with cookies.
+  const clients = ['tv', 'mweb', 'web_creator', 'android'];
   
   for (const client of clients) {
-    // If the cookies file exists, use it
     let cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
-    const fullArgs = `yt-dlp ${cookieArgs} --extractor-args "youtube:player_client=${client}" ${args}`;
+    // 3. Added --no-warnings to keep stdout clean for JSON parsing
+    const fullArgs = `yt-dlp ${cookieArgs} --no-warnings --extractor-args "youtube:player_client=${client}" ${args}`;
 
     try {
       const { stdout, stderr } = await execPromise(fullArgs, { maxBuffer: 1024 * 1024 * 50 });
+      if (stderr) console.warn(`yt-dlp stderr (${client}):`, stderr);
       return stdout;
     } catch (e) {
       lastError = e;
@@ -52,7 +57,19 @@ app.get('/api/info', async (req, res) => {
   try {
     const url = `https://www.youtube.com/watch?v=${id}`;
     const stdout = await runYtDlp(`--dump-json --no-playlist "${url}"`);
-    const info = JSON.parse(stdout);
+    
+    // 4. Robust JSON parsing: extract only the JSON object from stdout
+    let jsonString = stdout.trim();
+    const startIdx = jsonString.indexOf('{');
+    const endIdx = jsonString.lastIndexOf('}');
+    
+    if (startIdx !== -1 && endIdx !== -1) {
+      jsonString = jsonString.substring(startIdx, endIdx + 1);
+    } else {
+      throw new Error(`Failed to parse JSON. Raw output: ${stdout.substring(0, 100)}...`);
+    }
+
+    const info = JSON.parse(jsonString);
 
     const availableHeights = new Set();
     info.formats.forEach(f => {
@@ -85,7 +102,11 @@ app.get('/api/info', async (req, res) => {
     });
   } catch (error) {
     console.error('yt-dlp metadata error:', error);
-    return res.status(500).json({ error: 'Backend failed', details: error.message });
+    return res.status(500).json({ 
+      error: 'Backend failed to fetch video', 
+      details: error.message,
+      stderr: error.stderr || 'No stderr available'
+    });
   }
 });
 
