@@ -1,95 +1,90 @@
+// language: JavaScript, file: server.js, runtime: Node 18+
+// adapted from the "rip" project: works with Railway, reads cookies from env
 const express = require('express');
 const cors = require('cors');
-const { exec } = require('child_process');
-const util = require('util');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const execPromise = util.promisify(exec);
+const { spawn } = require('child_process');
 
 const app = express();
 app.use(cors());
 
+const PORT = process.env.PORT || 8080;
+const YTDLP = process.env.YTDLP || 'yt-dlp';
 const COOKIES_FILE = '/tmp/cookies.txt';
 
+// ── COOKIE HANDLING ──────────────────────────────────────────────
+// Railway env vars convert tabs to spaces and \n to literal "\n".
+// yt-dlp requires Netscape format (tabs + real newlines). Fix it here.
 if (process.env.YOUTUBE_COOKIES) {
   try {
-    let cookiesContent = process.env.YOUTUBE_COOKIES
+    let c = process.env.YOUTUBE_COOKIES
       .replace(/\\n/g, '\n')
       .replace(/\r\n/g, '\n');
-
-    cookiesContent = cookiesContent.split('\n').map(line => {
+    c = c.split('\n').map(line => {
       if (line.startsWith('#') || line.trim() === '') return line;
       return line.replace(/ {2,}/g, '\t');
     }).join('\n');
-
-    fs.writeFileSync(COOKIES_FILE, cookiesContent);
-    console.log('Successfully loaded and formatted cookies from environment variable.');
+    fs.writeFileSync(COOKIES_FILE, c);
+    console.log(`[cookies] loaded from env (${c.split('\n').filter(l => !l.startsWith('#') && l.trim()).length} entries)`);
   } catch (e) {
-    console.error('Failed to write cookies file:', e);
+    console.error('[cookies] failed to write:', e);
   }
 } else {
-  console.warn('No YOUTUBE_COOKIES environment variable found.');
+  console.warn('[cookies] YOUTUBE_COOKIES not set — running without auth');
 }
+// ─────────────────────────────────────────────────────────────────
 
-async function runYtDlp(args) {
-  let lastError;
-  const clients = ['tv', 'mweb', 'web_creator', 'android'];
-  
-  for (const client of clients) {
-    let cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
-    const fullArgs = `yt-dlp ${cookieArgs} --no-warnings --extractor-args "youtube:player_client=${client}" ${args}`;
-
-    try {
-      const { stdout, stderr } = await execPromise(fullArgs, { maxBuffer: 1024 * 1024 * 50 });
-      if (stderr) console.warn(`yt-dlp stderr (${client}):`, stderr);
-      return stdout;
-    } catch (e) {
-      lastError = e;
-      console.warn(`yt-dlp attempt with ${client} failed:`, e.message);
-      if (e.stderr) console.error(`Full stderr (${client}):`, e.stderr);
+function runYtDlp(args) {
+  return new Promise((resolve, reject) => {
+    const allArgs = [...args];
+    if (fs.existsSync(COOKIES_FILE)) {
+      allArgs.unshift('--cookies', COOKIES_FILE);
     }
-  }
-  throw lastError;
+    // The exact client that worked locally for you
+    allArgs.unshift(
+      '--extractor-args', 'youtube:player_client=web_safari,tv,ios',
+      '--no-warnings',
+      '--no-check-certificates'
+    );
+
+    console.log(`[yt-dlp] spawn: ${YTDLP} ${allArgs.join(' ')}`);
+    const child = spawn(YTDLP, allArgs);
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', d => { stdout += d.toString(); });
+    child.stderr.on('data', d => { stderr += d.toString(); });
+    child.on('error', err => reject(err));
+    child.on('close', code => {
+      if (code === 0) return resolve(stdout);
+      reject(new Error(stderr.trim() || `yt-dlp exit ${code}`));
+    });
+  });
 }
 
+// ── GET /api/info?id=VIDEOID ─────────────────────────────────────
+// Returns metadata + available quality options for the picker.
 app.get('/api/info', async (req, res) => {
   const { id } = req.query;
-  if (!id) return res.status(400).json({ error: 'Missing video ID' });
+  if (!id) return res.status(400).json({ error: 'missing id' });
 
   try {
     const url = `https://www.youtube.com/watch?v=${id}`;
-    const stdout = await runYtDlp(`--dump-json --no-playlist "${url}"`);
-    
-    let jsonString = stdout.trim();
-    const startIdx = jsonString.indexOf('{');
-    const endIdx = jsonString.lastIndexOf('}');
-    
-    if (startIdx !== -1 && endIdx !== -1) {
-      jsonString = jsonString.substring(startIdx, endIdx + 1);
-    } else {
-      throw new Error(`Failed to parse JSON.`);
-    }
+    const stdout = await runYtDlp(['--dump-json', '--no-playlist', url]);
 
-    const info = JSON.parse(jsonString);
+    // Extract just the JSON object (yt-dlp sometimes prints warnings first)
+    const start = stdout.indexOf('{');
+    const end = stdout.lastIndexOf('}');
+    const info = JSON.parse(stdout.substring(start, end + 1));
 
-    const availableHeights = new Set();
-    info.formats.forEach(f => {
-      if (f.vcodec !== 'none' && f.height) {
-        availableHeights.add(f.height);
-      }
+    // Unique heights from available muxed or video-only streams
+    const heights = new Set();
+    (info.formats || []).forEach(f => {
+      if (f.vcodec && f.vcodec !== 'none' && f.height) heights.add(f.height);
     });
-
-    const sortedHeights = Array.from(availableHeights).sort((a, b) => b - a);
-    if (sortedHeights.length === 0) throw new Error('No video formats found.');
-
-    const formats = sortedHeights.map(h => ({
-      qualityLabel: `${h}p`,
-      height: h,
-      container: 'mp4',
-      type: 'video/mp4',
-      url: `/api/stream?id=${id}&height=${h}`
-    }));
+    const sorted = Array.from(heights).sort((a, b) => b - a);
+    if (!sorted.length) throw new Error('no video formats available');
 
     return res.json({
       videoId: id,
@@ -100,59 +95,80 @@ app.get('/api/info', async (req, res) => {
       lengthSeconds: info.duration,
       description: info.description,
       videoThumbnails: [{ url: info.thumbnail }],
-      formatStreams: formats
+      formatStreams: sorted.map(h => ({
+        qualityLabel: `${h}p`,
+        height: h,
+        container: 'mp4',
+        type: 'video/mp4',
+        url: `/api/stream?id=${id}&height=${h}`
+      }))
     });
-  } catch (error) {
-    console.error('yt-dlp metadata error:', error);
-    return res.status(500).json({ 
-      error: 'Backend failed to fetch video', 
-      details: error.message,
-      stderr: error.stderr || 'No stderr available'
-    });
+  } catch (e) {
+    console.error('[info] failed:', e.message);
+    return res.status(500).json({ error: 'Backend failed', details: e.message });
   }
 });
 
+// ── GET /api/stream?id=VIDEOID&height=HEIGHT ─────────────────────
+// Spawns yt-dlp with your proven format selector and pipes the result
+// straight to the client. No temp file, no polling — just a direct pipe.
 app.get('/api/stream', async (req, res) => {
   const { id, height } = req.query;
-  if (!id || !height) return res.status(400).send('Missing parameters');
+  if (!id) return res.status(400).send('missing id');
 
-  const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
+  const url = `https://www.youtube.com/watch?v=${id}`;
+  const h = parseInt(height, 10) || 1080;
 
-  try {
-    const url = `https://www.youtube.com/watch?v=${id}`;
-    
-    // THE FIX: A more robust fallback chain that guarantees a download
-    // 1. Try best video up to requested height + best audio
-    // 2. If that fails, try best video + best audio (ignoring height)
-    // 3. If that fails, try the absolute best combined stream
-    const formatStr = `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]/best`;
-    
-    await runYtDlp(`-f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`);
+  // Your exact selector from the "rip" project — proven to work
+  const format = `bv*[height<=${h}][ext=mp4]+ba[ext=m4a]/b[height<=${h}][ext=mp4]/bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/b`;
 
-    if (!fs.existsSync(tempFile)) throw new Error('Download failed, file not found');
+  const args = [
+    '-f', format,
+    '--merge-output-format', 'mp4',
+    '--no-playlist',
+    '-o', '-', // output to stdout
+    url
+  ];
 
-    const stat = fs.statSync(tempFile);
-    console.log(`Success! File size: ${(stat.size / 1024 / 1024).toFixed(2)} MB`);
-    
-    res.setHeader('Content-Length', stat.size);
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+  if (fs.existsSync(COOKIES_FILE)) args.unshift('--cookies', COOKIES_FILE);
+  args.unshift(
+    '--extractor-args', 'youtube:player_client=web_safari,tv,ios',
+    '--no-warnings',
+    '--no-check-certificates'
+  );
 
-    const readStream = fs.createReadStream(tempFile);
-    readStream.pipe(res);
+  console.log(`[stream] ${id} @ ${h}p`);
 
-    readStream.on('end', () => {
-      fs.unlink(tempFile, (err) => { if (err) console.error('Failed to delete temp file:', err); });
-    });
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
 
-  } catch (error) {
-    console.error('yt-dlp stream error:', error);
-    if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
-    if (!res.headersSent) res.status(500).json({ error: 'Failed to stream video', details: error.message });
-  }
+  const child = spawn(YTDLP, args);
+  child.stdout.pipe(res);
+
+  child.stderr.on('data', d => {
+    const line = d.toString().trim();
+    if (line) console.log('[yt-dlp stderr]', line.substring(0, 200));
+  });
+
+  child.on('error', err => {
+    console.error('[stream] spawn error:', err);
+    if (!res.headersSent) res.status(500).end('spawn failed');
+  });
+
+  child.on('close', code => {
+    if (code !== 0) console.error(`[stream] yt-dlp exited ${code}`);
+  });
+
+  // If the client disconnects, kill yt-dlp
+  req.on('close', () => {
+    if (!child.killed) child.kill();
+  });
 });
 
-const PORT = process.env.PORT || 8080;
+app.get('/', (req, res) => res.json({ status: 'ok', service: 'offlinetube-ytdlp' }));
+
 app.listen(PORT, () => {
-  console.log(`Railway yt-dlp backend running on port ${PORT}`);
+  console.log(`[boot] listening on ${PORT}`);
+  console.log(`[boot] yt-dlp: ${YTDLP}`);
+  console.log(`[boot] cookies: ${fs.existsSync(COOKIES_FILE) ? 'loaded' : 'none'}`);
 });
