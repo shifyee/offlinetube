@@ -10,6 +10,23 @@ const execPromise = util.promisify(exec);
 const app = express();
 app.use(cors());
 
+// Helper to run yt-dlp with retries
+async function runYtDlp(args) {
+  let lastError;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const { stdout } = await execPromise(args, { maxBuffer: 1024 * 1024 * 50 });
+      return stdout;
+    } catch (e) {
+      lastError = e;
+      console.warn(`yt-dlp attempt ${i + 1} failed:`, e.message);
+      // Wait 2 seconds before retrying
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+  throw lastError;
+}
+
 app.get('/api/info', async (req, res) => {
   const { id } = req.query;
   if (!id) return res.status(400).json({ error: 'Missing video ID' });
@@ -17,12 +34,12 @@ app.get('/api/info', async (req, res) => {
   try {
     const url = `https://www.youtube.com/watch?v=${id}`;
     
-    // 1. Get metadata and all available formats using the ios client
-    const cmd = `yt-dlp --extractor-args "youtube:player_client=ios" --dump-json --no-playlist "${url}"`;
-    const { stdout } = await execPromise(cmd, { maxBuffer: 1024 * 1024 * 10 });
+    // Use the default client rotation instead of forcing a single client
+    const cmd = `yt-dlp --dump-json --no-playlist "${url}"`;
+    const stdout = await runYtDlp(cmd);
     const info = JSON.parse(stdout);
 
-    // 2. Extract unique video heights (resolutions) from the available formats
+    // Extract available heights
     const availableHeights = new Set();
     info.formats.forEach(f => {
       if (f.vcodec !== 'none' && f.height) {
@@ -30,14 +47,12 @@ app.get('/api/info', async (req, res) => {
       }
     });
 
-    // 3. Sort them from highest to lowest
     const sortedHeights = Array.from(availableHeights).sort((a, b) => b - a);
 
-    // 4. Build the UI options dynamically based on what actually exists
     const formats = sortedHeights.map(h => ({
       qualityLabel: `${h}p`,
       height: h,
-      container: 'mp4', // We will force merge to MP4
+      container: 'mp4',
       type: 'video/mp4',
       url: `/api/stream?id=${id}&height=${h}`
     }));
@@ -68,20 +83,13 @@ app.get('/api/stream', async (req, res) => {
   try {
     const url = `https://www.youtube.com/watch?v=${id}`;
     
-    // THE FIX: 
-    // bv* means "best video regardless of codec"
-    // ba means "best audio"
-    // The slash / means "or fallback to best muxed if above fails"
-    // We use the ios client to get high-quality streams
+    // bv* + ba ensures we get the best video and audio, merging with ffmpeg
     const formatStr = `bv*[height<=${height}]+ba/b[height<=${height}]/b`;
     
-    // Download, merge into an MP4 container, and save to temp file
-    const cmd = `yt-dlp --extractor-args "youtube:player_client=ios" -f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`;
+    const cmd = `yt-dlp -f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`;
     
-    console.log(`Downloading true ${height}p for ${id}...`);
-    
-    // Allow up to 5 minutes for large downloads/merges
-    await execPromise(cmd, { maxBuffer: 1024 * 1024 * 100, timeout: 300000 });
+    console.log(`Downloading ${height}p for ${id}...`);
+    await runYtDlp(cmd);
 
     if (!fs.existsSync(tempFile)) {
       throw new Error('Download failed, file not found');
