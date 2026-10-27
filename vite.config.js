@@ -3,7 +3,7 @@ import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
 import fs from 'fs'
 import path from 'path'
-import { execSync } from 'child_process'
+import AdmZip from 'adm-zip'
 
 function downloadGams() {
   return {
@@ -13,24 +13,24 @@ function downloadGams() {
       const zipPath = path.resolve(__dirname, 'gams.zip');
       const targetDir = path.resolve(__dirname, 'public/gams');
       
-      // If it already exists, skip
       if (fs.existsSync(path.join(targetDir, 'index.html'))) {
         console.log('Gams already extracted.');
         return;
       }
 
-      console.log('Downloading gams...');
+      console.log('Downloading gams.zip...');
       try {
         const res = await fetch(zipUrl);
         if (!res.ok) throw new Error(`Failed to download: ${res.statusText}`);
+        
         const arrayBuffer = await res.arrayBuffer();
         fs.writeFileSync(zipPath, Buffer.from(arrayBuffer));
 
-        console.log('Unzipping...');
-        // Unzip to a temp folder
+        console.log('Unzipping gams with adm-zip...');
+        const zip = new AdmZip(zipPath);
+        // Extract everything to a temp directory first
         const tempDir = path.resolve(__dirname, 'temp_gams');
-        fs.mkdirSync(tempDir, { recursive: true });
-        execSync(`unzip -o "${zipPath}" -d "${tempDir}"`);
+        zip.extractAllTo(tempDir, true);
 
         // Find the actual folder (usually Gams-main)
         const contents = fs.readdirSync(tempDir);
@@ -85,7 +85,6 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 100 * 1024 * 1024, 
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//, /^\/gams\//], 
-        // NEW: Cache YouTube thumbnails offline
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/i\.ytimg\.com\/.*/i,
