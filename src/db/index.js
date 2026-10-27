@@ -2,7 +2,7 @@ import Dexie from 'dexie'
 
 export const db = new Dexie('offline-tube')
 
-db.version(1).stores({
+db.version(2).stores({
   videos: 'id, title, author, status, downloadedAt, addedAt',
   chunks: '++id, videoId, seq, [videoId+seq]'
 })
