@@ -7,18 +7,20 @@ function aborted(signal) {
 }
 
 export async function downloadVideo(video, streamUrl, { onProgress, signal } = {}) {
-  const id = video.videoId
+  // THE FIX: Strip Vue's reactivity (Proxy) by cloning to a plain object
+  const plainVideo = JSON.parse(JSON.stringify(video))
+  const id = plainVideo.videoId || plainVideo.id
   
   await clearChunks(id)
   await db.videos.put({
     id, 
-    title: video.title, 
-    author: video.author, 
-    authorId: video.authorId,
-    lengthSeconds: video.lengthSeconds, 
-    thumbnail: video.videoThumbnails?.[0]?.url || null,
-    description: video.description || '',
-    comments: video.comments || [],
+    title: plainVideo.title, 
+    author: plainVideo.author, 
+    authorId: plainVideo.authorId,
+    lengthSeconds: plainVideo.lengthSeconds, 
+    thumbnail: plainVideo.videoThumbnails?.[0]?.url || null,
+    description: plainVideo.description || '',
+    comments: plainVideo.comments || [],
     status: 'downloading', 
     progress: 0, 
     size: 0, 
