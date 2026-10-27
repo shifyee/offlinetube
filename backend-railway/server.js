@@ -23,8 +23,8 @@ if (process.env.YOUTUBE_COOKIES) {
   } catch (e) { console.error('Failed to write cookies:', e); }
 }
 
-// 15 second strict timeout for metadata to prevent the app from hanging
-function runCommand(cmd, args, timeoutMs = 15000) {
+// Safe timeout execution using spawn (20 seconds to allow for comments)
+function runCommand(cmd, args, timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args);
     let stdout = '';
@@ -47,15 +47,15 @@ function runCommand(cmd, args, timeoutMs = 15000) {
   });
 }
 
-function buildYtDlpArgs(args) {
+function buildYtDlpArgs(args, fetchComments) {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
   
-  // THE FIX: Only use POT provider and limit comments to 20 (0 replies)
-  // NO forced player clients! This lets yt-dlp fetch 4K natively.
-  const extractorArgs = [
-    'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416',
-    'youtube:max_comments=20,0,0,0'
-  ].join(';');
+  // THE FIX: No forced player clients (restores 4K).
+  // Correct comment syntax: 20 comments, 20 parents, 0 replies.
+  let extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  if (fetchComments) {
+    extractorArgs += ';youtube:max_comments=20,20,0,0';
+  }
 
   return [
     ...cookieArgs,
@@ -73,23 +73,31 @@ app.get('/api/info', async (req, res) => {
 
   const url = `https://www.youtube.com/watch?v=${id}`;
   let stdout = null;
+  let lastError = null;
 
-  // Attempt 1: Try to fetch with comments (strict 15s timeout)
+  // Try with comments. Give it 20 seconds.
   try {
-    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', '--no-playlist', url]), 15000);
+    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', '--no-playlist', url], true), 20000);
   } catch (e) {
-    console.warn('Attempt with comments timed out. Retrying without comments for speed...');
+    lastError = e;
+    console.warn('Attempt with comments failed, retrying without comments...');
   }
 
-  // Attempt 2: If it timed out, just get the video data so the user can still download
+  // If comments fail (or timeout), try without comments to at least get the video.
   if (!stdout) {
     try {
-      const argsWithoutComments = buildYtDlpArgs(['--dump-json', '--no-playlist', url]).filter(a => !a.includes('max_comments'));
-      stdout = await runCommand('yt-dlp', argsWithoutComments, 15000);
+      stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', '--no-playlist', url], false), 15000);
     } catch (e) {
-      console.error('Both attempts failed:', e.message);
-      return res.status(500).json({ error: 'Failed to fetch video.', details: e.message });
+      lastError = e;
+      console.error('Both attempts failed:', e.message.substring(0, 200));
     }
+  }
+
+  if (!stdout) {
+    const errMsg = lastError ? lastError.message : 'Unknown error';
+    // Ensure CORS headers are sent even on error
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    return res.status(500).json({ error: 'Failed to fetch metadata.', details: errMsg });
   }
 
   try {
@@ -132,6 +140,7 @@ app.get('/api/info', async (req, res) => {
     });
   } catch (error) {
     console.error('JSON parse error:', error);
+    res.setHeader('Access-Control-Allow-Origin', '*');
     return res.status(500).json({ error: 'Failed to parse metadata.', details: error.message });
   }
 });
@@ -145,7 +154,7 @@ app.get('/api/stream', async (req, res) => {
   const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
 
   try {
-    const args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url]).filter(a => !a.includes('max_comments'));
+    const args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url], false);
 
     await new Promise((resolve, reject) => {
       const child = spawn('yt-dlp', args);
@@ -181,7 +190,10 @@ app.get('/api/stream', async (req, res) => {
 
   } catch (e) {
     if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
-    if (!res.headersSent) res.status(500).json({ error: 'Download failed', details: e.message });
+    if (!res.headersSent) {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.status(500).json({ error: 'Download failed', details: e.message });
+    }
   }
 });
 
