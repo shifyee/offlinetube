@@ -30,7 +30,6 @@ function downloadGams() {
 
         console.log('Unzipping gams into public/gams...');
         fs.mkdirSync(targetDir, { recursive: true });
-        // 'unzip' is available in Vercel and Cloudflare build environments
         execSync(`unzip -o "${zipPath}" -d "${targetDir}"`);
         
         fs.unlinkSync(zipPath);
@@ -64,12 +63,12 @@ export default defineConfig({
         ]
       },
       workbox: {
-        // Cache the unzipped games so they work offline
         globPatterns: [
           '**/*.{js,css,html,svg,png,ico,woff,woff2,json,mp3,ogg,wasm}',
           'gams/**/*' 
         ],
-        maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB cache limit per file
+        // THE FIX: Increase cache limit from 2MB to 100MB for large game files
+        maximumFileSizeToCacheInBytes: 100 * 1024 * 1024, 
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: []
