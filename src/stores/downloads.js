@@ -20,7 +20,6 @@ export const useDownloadsStore = defineStore('downloads', {
       const id = video.videoId || video.id
       if (!id || this.active[id]) return
       
-      // Extract height from the URL (e.g. "height=1080" -> 1080)
       const match = streamUrl.match(/height=(\d+)/);
       const height = match ? parseInt(match[1], 10) : 1080;
 
@@ -33,7 +32,6 @@ export const useDownloadsStore = defineStore('downloads', {
       }
 
       try {
-        // 1. Tell backend to start downloading
         const res = await fetch(`${BACKEND}/api/download`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -44,7 +42,6 @@ export const useDownloadsStore = defineStore('downloads', {
 
         this.active[id].status = 'downloading';
 
-        // 2. Poll for progress
         let isDone = false;
         while (!isDone) {
           await new Promise(r => setTimeout(r, 1500));
@@ -60,14 +57,23 @@ export const useDownloadsStore = defineStore('downloads', {
           }
         }
 
-        // 3. Save the file to IndexedDB
         this.active[id].status = 'saving';
         await clearChunks(id);
-        await db.videos.put({
-          id, title: video.title, author: video.author, authorId: video.authorId,
-          lengthSeconds: video.lengthSeconds, thumbnail: this.active[id].thumbnail,
+
+        // THE FIX: Strip Vue's reactivity (Proxy) by cloning to a plain object
+        const plainVideo = JSON.parse(JSON.stringify({
+          id,
+          title: video.title,
+          author: video.author,
+          authorId: video.authorId,
+          lengthSeconds: video.lengthSeconds,
+          thumbnail: this.active[id].thumbnail,
           description: video.description || '',
-          comments: video.comments || [],
+          comments: video.comments || []
+        }));
+
+        await db.videos.put({
+          ...plainVideo,
           status: 'complete', progress: 1, size: 0, addedAt: Date.now(), downloadedAt: Date.now()
         });
 
@@ -102,7 +108,6 @@ export const useDownloadsStore = defineStore('downloads', {
       }
     },
     cancel(id) {
-      // Not fully implemented for job queue, but prevents crashes
       if (this.active[id]) delete this.active[id];
     }
   }
