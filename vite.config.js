@@ -13,7 +13,6 @@ function downloadGams() {
       const zipPath = path.resolve(__dirname, 'gams.zip');
       const targetDir = path.resolve(__dirname, 'public/gams');
 
-      // If Gams.html is already there, skip
       if (fs.existsSync(path.join(targetDir, 'Gams.html'))) {
         console.log('Gams already extracted.');
         return;
@@ -32,7 +31,7 @@ function downloadGams() {
         const tempDir = path.resolve(__dirname, 'temp_gams');
         zip.extractAllTo(tempDir, true);
 
-        // Recursively find the folder containing Gams.html
+        // Find the folder containing Gams.html
         let sourceDir = null;
         const findGamsHtml = (dir) => {
           if (fs.readdirSync(dir).includes('Gams.html')) {
@@ -49,7 +48,7 @@ function downloadGams() {
         findGamsHtml(tempDir);
         if (!sourceDir) throw new Error('Could not find Gams.html');
 
-        // Copy contents to public/gams
+        // Copy the entire contents of that folder to public/gams
         fs.mkdirSync(targetDir, { recursive: true });
         const copyRecursiveSync = (src, dest) => {
           if (fs.statSync(src).isDirectory()) {
