@@ -6,7 +6,7 @@ function aborted(signal) {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 }
 
-export async function downloadVideo(video, streamUrl, { onProgress, signal } = {}) {
+export async function downloadVideo(video, streamUrl, expectedSize, { onProgress, signal } = {}) {
   const plainVideo = JSON.parse(JSON.stringify(video))
   const id = plainVideo.videoId || plainVideo.id
   
@@ -22,7 +22,7 @@ export async function downloadVideo(video, streamUrl, { onProgress, signal } = {
   const res = await fetch(streamUrl, { signal })
   if (!res.ok) throw new Error(`Fetch failed: ${res.status}`)
   
-  const contentLength = parseInt(res.headers.get('content-length') || '0', 10)
+  const contentLength = parseInt(res.headers.get('content-length') || '0', 10) || expectedSize
   const reader = res.body.getReader()
   const parts = []
   let loaded = 0
@@ -35,7 +35,7 @@ export async function downloadVideo(video, streamUrl, { onProgress, signal } = {
     loaded += value.byteLength
     
     if (contentLength) {
-      onProgress?.({ progress: loaded / contentLength, downloaded: loaded, total: contentLength })
+      onProgress?.({ progress: Math.min(loaded / contentLength, 1), downloaded: loaded, total: contentLength })
     }
   }
 
