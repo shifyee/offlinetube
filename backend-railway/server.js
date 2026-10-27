@@ -122,7 +122,8 @@ app.get('/api/stream', async (req, res) => {
   try {
     const args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url], false);
 
-    // Download to temp file and wait for completion
+    console.log(`[Stream] Starting download for ${id} at ${height}p...`);
+    
     await new Promise((resolve, reject) => {
       const child = spawn('yt-dlp', args);
       const timeout = setTimeout(() => {
@@ -131,8 +132,11 @@ app.get('/api/stream', async (req, res) => {
       }, 900000); // 15 minutes
 
       child.stderr.on('data', (data) => {
-        const match = /\[download\]\s+([\d.]+)%/.exec(data.toString());
-        if (match) console.log(`Progress: ${match[1]}%`);
+        const text = data.toString();
+        // Log progress to Railway console
+        if (text.includes('[download]')) {
+            console.log(`[Stream] ${text.trim()}`);
+        }
       });
 
       child.on('error', (err) => { clearTimeout(timeout); reject(err); });
@@ -145,17 +149,18 @@ app.get('/api/stream', async (req, res) => {
 
     if (!fs.existsSync(tempFile)) throw new Error('File missing');
 
+    console.log(`[Stream] Download complete. Sending to client...`);
     const stat = fs.statSync(tempFile);
     res.setHeader('Content-Length', stat.size);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
 
-    // Send the file to the client
     const readStream = fs.createReadStream(tempFile);
     readStream.pipe(res);
     readStream.on('end', () => fs.unlink(tempFile, () => {}));
 
   } catch (e) {
+    console.error(`[Stream] Error:`, e.message);
     if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
     if (!res.headersSent) res.status(500).json({ error: 'Download failed', details: e.message });
   }
