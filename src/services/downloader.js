@@ -1,7 +1,6 @@
-// src/services/downloader.js
 import { db, clearChunks } from '../db'
 
-const CHUNK_SIZE = 2 * 1024 * 1024 // 2MB chunks
+const CHUNK_SIZE = 2 * 1024 * 1024
 
 function aborted(signal) {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
@@ -12,15 +11,24 @@ export async function downloadVideo(video, streamUrl, { onProgress, signal } = {
   
   await clearChunks(id)
   await db.videos.put({
-    id, title: video.title, author: video.author, authorId: video.authorId,
-    lengthSeconds: video.lengthSeconds, thumbnail: video.videoThumbnails?.[0]?.url || null,
-    status: 'downloading', progress: 0, size: 0, addedAt: Date.now(), downloadedAt: null
+    id, 
+    title: video.title, 
+    author: video.author, 
+    authorId: video.authorId,
+    lengthSeconds: video.lengthSeconds, 
+    thumbnail: video.videoThumbnails?.[0]?.url || null,
+    description: video.description || '',
+    comments: video.comments || [],
+    status: 'downloading', 
+    progress: 0, 
+    size: 0, 
+    addedAt: Date.now(), 
+    downloadedAt: null
   })
 
   let supportsRange = false
   let total = 0
 
-  // Probe the Railway backend to see if it supports Range
   try {
     const probe = await fetch(streamUrl, { method: 'GET', headers: { Range: 'bytes=0-0' }, signal })
     if (probe.status === 206) {
@@ -59,7 +67,6 @@ export async function downloadVideo(video, streamUrl, { onProgress, signal } = {
     }
   }
 
-  // Fallback: Full fetch (if Railway or YouTube blocks Range)
   const res = await fetch(streamUrl, { signal })
   if (!res.ok) throw new Error(`Fetch failed: ${res.status}`)
   const contentLength = parseInt(res.headers.get('content-length') || '0', 10)
