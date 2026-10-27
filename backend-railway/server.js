@@ -27,7 +27,9 @@ if (process.env.YOUTUBE_COOKIES) {
 
 function buildYtDlpCmd(args) {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
-  return `yt-dlp ${cookieArgs} --no-warnings --no-check-certificates --newline ${args}`;
+  // THE ONLY extractor-arg we need: point to the local POT provider (which your Dockerfile starts)
+  const extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  return `yt-dlp ${cookieArgs} --no-warnings --no-check-certificates --newline --extractor-args "${extractorArgs}" ${args}`;
 }
 
 async function runYtDlp(args) {
@@ -52,7 +54,6 @@ app.get('/api/info', async (req, res) => {
   const url = `https://www.youtube.com/watch?v=${id}`;
   
   try {
-    // NO --extractor-args. Just pure yt-dlp with cookies.
     const stdout = await runYtDlp(`--write-comments --dump-json --no-playlist "${url}"`);
     
     let jsonString = stdout.trim();
@@ -105,7 +106,7 @@ app.get('/api/stream', async (req, res) => {
   const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
-  // The exact format string from your working 'rip' project
+  // The exact format string from your 'rip' project
   const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
   
   try {
