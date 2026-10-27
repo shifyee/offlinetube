@@ -3,7 +3,7 @@ import { ref } from 'vue'
 
 // Use the exact images you provided
 const pfpUrl = 'https://ibb.co/5X2hYF4K' // Placeholder, replace with your actual image link if needed
-const bgUrl = 'blob:https://chatgpt.com/7a33231f-08bf-4c4c-ac4c-a6c988638c61'
+const bgUrl = 'https://chatgpt.com/7a33231f-08bf-4c4c-ac4c-a6c988638c61'
 </script>
 
 <template>
