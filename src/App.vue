@@ -62,7 +62,10 @@ function doSearch() {
           </form>
         </header>
 
-        <!-- THE FIX: Conditionally remove padding for the Playables view -->
+        <!-- 
+          CRITICAL FIX: If the route is 'playables', we remove the padding (p-6) 
+          so the games fill the entire screen.
+        -->
         <main class="flex-1" :class="route.name === 'playables' ? '' : 'p-6'">
           <RouterView />
         </main>
