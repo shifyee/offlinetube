@@ -1,9 +1,50 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
+import fs from 'fs'
+import path from 'path'
+import { execSync } from 'child_process'
+
+// Custom plugin to download and unzip the games before building
+function downloadGams() {
+  return {
+    name: 'download-gams',
+    async buildStart() {
+      const zipUrl = 'https://github.com/shifyee/offlinetube/releases/download/v1.0/gams.zip';
+      const zipPath = path.resolve(__dirname, 'gams.zip');
+      const targetDir = path.resolve(__dirname, 'public/gams');
+
+      // If the games are already extracted, skip
+      if (fs.existsSync(targetDir) && fs.readdirSync(targetDir).length > 0) {
+        console.log('Gams folder already exists, skipping download.');
+        return;
+      }
+
+      console.log('Downloading gams.zip from GitHub Releases...');
+      try {
+        const res = await fetch(zipUrl);
+        if (!res.ok) throw new Error(`Failed to download: ${res.statusText}`);
+        
+        const arrayBuffer = await res.arrayBuffer();
+        fs.writeFileSync(zipPath, Buffer.from(arrayBuffer));
+
+        console.log('Unzipping gams into public/gams...');
+        fs.mkdirSync(targetDir, { recursive: true });
+        // 'unzip' is available in Vercel and Cloudflare build environments
+        execSync(`unzip -o "${zipPath}" -d "${targetDir}"`);
+        
+        fs.unlinkSync(zipPath);
+        console.log('Gams downloaded and extracted successfully.');
+      } catch (error) {
+        console.error('Error setting up Gams:', error);
+      }
+    }
+  }
+}
 
 export default defineConfig({
   plugins: [
+    downloadGams(),
     vue(),
     VitePWA({
       registerType: 'autoUpdate',
@@ -23,13 +64,12 @@ export default defineConfig({
         ]
       },
       workbox: {
-        // Cache EVERYTHING inside the gams folder, plus standard assets
+        // Cache the unzipped games so they work offline
         globPatterns: [
           '**/*.{js,css,html,svg,png,ico,woff,woff2,json,mp3,ogg,wasm}',
           'gams/**/*' 
         ],
-        // Increase the maximum file size to cache to 10MB just in case a game has a big asset
-        maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
+        maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB cache limit per file
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: []
