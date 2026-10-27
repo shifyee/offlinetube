@@ -21,12 +21,11 @@ if (process.env.YOUTUBE_COOKIES) {
       .map(line => line.startsWith('#') || line.trim() === '' ? line : line.replace(/ {2,}/g, '\t'))
       .join('\n');
     fs.writeFileSync(COOKIES_FILE, cookiesContent);
-    console.log('Successfully loaded and formatted cookies.');
+    console.log('Successfully loaded cookies.');
   } catch (e) { console.error('Failed to write cookies:', e); }
 }
 
 function buildYtDlpCmd(args) {
-  // EXACT logic from the user's working 'rip' project
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
   return `yt-dlp ${cookieArgs} --no-warnings --no-check-certificates --newline ${args}`;
 }
@@ -53,7 +52,8 @@ app.get('/api/info', async (req, res) => {
   const url = `https://www.youtube.com/watch?v=${id}`;
   
   try {
-    const stdout = await runYtDlp(`--write-comments --extractor-args "youtube:max_comments=20,all,0,0" --dump-json --no-playlist "${url}"`);
+    // NO --extractor-args. Just pure yt-dlp with cookies.
+    const stdout = await runYtDlp(`--write-comments --dump-json --no-playlist "${url}"`);
     
     let jsonString = stdout.trim();
     const startIdx = jsonString.indexOf('{');
@@ -105,7 +105,7 @@ app.get('/api/stream', async (req, res) => {
   const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
-  // EXACT format string from the user's working 'rip' project
+  // The exact format string from your working 'rip' project
   const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
   
   try {
