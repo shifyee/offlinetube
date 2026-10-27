@@ -23,14 +23,15 @@ if (process.env.YOUTUBE_COOKIES) {
   } catch (e) { console.error('Failed to write cookies:', e); }
 }
 
-function runCommand(cmd, args, timeoutMs = 45000) {
+// Safe timeout execution using spawn
+function runCommand(cmd, args, timeoutMs) {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { detached: true });
+    const child = spawn(cmd, args);
     let stdout = '';
     let stderr = '';
 
     const timeout = setTimeout(() => {
-      try { process.kill(-child.pid, 'SIGKILL'); } catch (e) { /* ignore */ }
+      child.kill('SIGKILL');
       reject(new Error('Command timed out'));
     }, timeoutMs);
 
@@ -49,11 +50,11 @@ function runCommand(cmd, args, timeoutMs = 45000) {
 function buildYtDlpArgs(args, withComments) {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
   
-  // THE FIX: Force web_safari (respects cookies) and use the correct POT arg
+  // THE FIX: 20 comments, 0 replies (20,0,0,0) to prevent infinite hang
   const extractorArgs = [
     'youtube:player_client=web_safari',
     'youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416',
-    withComments ? 'youtube:max_comments=20,all,0,0' : null
+    withComments ? 'youtube:max_comments=20,0,0,0' : null
   ].filter(Boolean).join(';');
 
   return [
@@ -66,13 +67,13 @@ function buildYtDlpArgs(args, withComments) {
   ];
 }
 
-async function runYtDlp(args, timeoutMs = 45000, withComments = true) {
+async function runYtDlp(args, timeoutMs, withComments = true) {
   const finalArgs = buildYtDlpArgs(args, withComments);
   try {
     return await runCommand('yt-dlp', finalArgs, timeoutMs);
   } catch (e) {
     if (e.message.includes('The page needs to be reloaded')) {
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 1000));
       return await runCommand('yt-dlp', finalArgs, timeoutMs);
     }
     throw e;
@@ -88,18 +89,18 @@ app.get('/api/info', async (req, res) => {
   let stdout = null;
   let lastError = null;
 
-  // Attempt 1: with comments
+  // Attempt 1: Try with comments (45 second timeout to let it load)
   try {
     stdout = await runYtDlp(['--write-comments', '--dump-json', '--no-playlist', url], 45000, true);
   } catch (e) {
     lastError = e;
-    console.warn('Attempt with comments failed, retrying without comments:', e.message.substring(0, 200));
+    console.warn('Attempt with comments timed out/failed, retrying without comments...');
   }
 
-  // Attempt 2: without comments
+  // Attempt 2: If comments fail/take too long, just get the video info (fast, 15s timeout)
   if (!stdout) {
     try {
-      stdout = await runYtDlp(['--dump-json', '--no-playlist', url], 30000, false);
+      stdout = await runYtDlp(['--dump-json', '--no-playlist', url], 15000, false);
     } catch (e) {
       lastError = e;
       console.error('Both attempts failed:', e.message.substring(0, 200));
@@ -108,15 +109,9 @@ app.get('/api/info', async (req, res) => {
 
   if (!stdout) {
     const errMsg = lastError ? lastError.message : 'Unknown error';
-    if (errMsg.includes('unavailable')) {
-      return res.status(404).json({
-        error: 'This video is unavailable to your YouTube cookies. It may be age-restricted, private, or deleted.',
-        details: errMsg
-      });
-    }
     if (errMsg.includes('Sign in to confirm')) {
       return res.status(401).json({
-        error: 'YouTube is blocking your IP. Please re-export your cookies or try again later.',
+        error: 'YouTube is blocking your IP. Please re-export your cookies.',
         details: errMsg
       });
     }
@@ -178,11 +173,12 @@ app.get('/api/stream', async (req, res) => {
     const args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url], false);
 
     await new Promise((resolve, reject) => {
-      const child = spawn('yt-dlp', args, { detached: true });
+      const child = spawn('yt-dlp', args);
+      // 10 minute timeout for the actual download
       const timeout = setTimeout(() => {
-        try { process.kill(-child.pid, 'SIGKILL'); } catch (e) {}
+        child.kill('SIGKILL');
         reject(new Error('Download timed out'));
-      }, 600000); // 10 minutes for large 4K files
+      }, 600000);
 
       child.stderr.on('data', (data) => {
         const match = /\[download\]\s+([\d.]+)%/.exec(data.toString());
