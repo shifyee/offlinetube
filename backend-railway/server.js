@@ -28,12 +28,9 @@ if (process.env.YOUTUBE_COOKIES) {
   } catch (e) { console.error('Failed to write cookies:', e); }
 }
 
-function buildYtDlpCmd(args, client = 'tv,mweb') {
+function buildYtDlpCmd(args, client = 'default') {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
-  
-  // THE FIX: Force SABR formats and use tv,mweb clients
   const extractorArgs = [
-    'youtube:formats=duplicate', // Force duplicate formats to include SABR
     'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416',
     `youtube:player_client=${client}`
   ].join(';');
@@ -41,7 +38,7 @@ function buildYtDlpCmd(args, client = 'tv,mweb') {
   return `yt-dlp ${cookieArgs} --no-warnings --no-check-certificates --force-ipv4 --newline --extractor-args "${extractorArgs}" ${args}`;
 }
 
-async function runYtDlp(args, client = 'tv,mweb') {
+async function runYtDlp(args, client = 'default') {
   const cmd = buildYtDlpCmd(args, client);
   try {
     const { stdout, stderr } = await execPromise(cmd, { maxBuffer: 1024 * 1024 * 50 });
@@ -61,7 +58,7 @@ app.get('/api/info', async (req, res) => {
   if (!id) return res.status(400).json({ error: 'Missing video ID' });
 
   const url = `https://www.youtube.com/watch?v=${id}`;
-  const clients = ['tv,mweb', 'tv', 'mweb', 'web_safari'];
+  const clients = ['default', 'web', 'tv', 'android', 'ios'];
   
   let metadata = null;
   let lastError = null;
@@ -107,7 +104,6 @@ app.get('/api/info', async (req, res) => {
   try {
     const heights = new Map();
     metadata.formats.forEach(f => {
-      // Include formats that have a height (both muxed and SABR)
       if (f.height && f.vcodec !== 'none') {
         const size = f.filesize || f.filesize_approx || 0;
         if (!heights.has(f.height) || heights.get(f.height) < size) {
@@ -150,9 +146,9 @@ app.get('/api/stream', async (req, res) => {
   const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
-  // THE FIX: Use the SABR protocol selector
-  const formatStr = `ba[protocol=sabr]+bv[protocol=sabr]/bv*[height<=${height}]+ba/b[height<=${height}]/b`;
-  const clients = ['tv,mweb', 'tv', 'mweb', 'web_safari'];
+  // THE EXACT FORMAT STRING FROM YOUR RIP PROJECT
+  const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
+  const clients = ['default', 'web', 'tv', 'android', 'ios'];
   
   let success = false;
   let lastError = null;
