@@ -14,9 +14,11 @@ const loading = ref(true)
       </div>
     </div>
 
-    <!-- Games iframe -->
+    <!-- 
+      THE FIX: The extracted files are inside 'Gams-main', so we update the path 
+    -->
     <iframe 
-      src="/gams/index.html" 
+      src="/gams/Gams-main/index.html" 
       class="w-full h-full border-0"
       @load="loading = false"
       allow="fullscreen; autoplay"
