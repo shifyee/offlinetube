@@ -39,7 +39,7 @@ const bgUrl = 'https://i.ibb.co/xt26gF4d/780f40e1-e80f-4c5e-902a-75ec4d4c3ee7.pn
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <!-- YouTube -->
-        <a href="https://youtube.com/shifyee" target="_blank" class="flex flex-col items-center justify-center p-4 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/5 transition-all hover:-translate-y-1 hover:shadow-[0_0_20px_rgba(255,0,0,0.3)] group">
+        <a href="https://youtube.com/@shifyee" target="_blank" class="flex flex-col items-center justify-center p-4 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/5 transition-all hover:-translate-y-1 hover:shadow-[0_0_20px_rgba(255,0,0,0.3)] group">
           <svg viewBox="0 0 24 24" class="w-8 h-8 fill-red-500 mb-2 group-hover:scale-110 transition-transform"><path d="M21.58 7.19c-.23-.86-.91-1.54-1.77-1.77C18.25 5 12 5 12 5s-6.25 0-7.81.42c-.86.23-1.54.91-1.77 1.77C2 8.75 2 12 2 12s0 3.25.42 4.81c.23.86.91 1.54 1.77 1.77C5.75 19 12 19 12 19s6.25 0 7.81-.42c.86-.23 1.54-.91 1.77-1.77C22 15.25 22 12 22 12s0-3.25-.42-4.81zM10 15V9l5.2 3-5.2 3z"/></svg>
           <span class="font-bold text-sm text-gray-300 group-hover:text-white">YouTube</span>
         </a>
