@@ -2,7 +2,6 @@
 import { ref } from 'vue'
 
 const loading = ref(true)
-const error = ref(false)
 </script>
 
 <template>
@@ -15,21 +14,13 @@ const error = ref(false)
       </div>
     </div>
 
-    <!-- Error message if the games can't load -->
-    <div v-if="error" class="absolute inset-0 flex flex-col items-center justify-center bg-bg z-10 text-muted p-6 text-center">
-      <p class="mb-4">Could not load the games. The server might be missing the files.</p>
-      <a href="/gams/Gams-main/index.html" target="_blank" class="px-4 py-2 bg-accent text-white rounded-lg">Open in new tab</a>
-    </div>
-
     <!-- 
-      The zip extracts to Gams-main, so we point the iframe there.
-      We also listen for load and error events.
+      THE FIX: Path points to /gams/Gams-main/index.html 
     -->
     <iframe 
       src="/gams/Gams-main/index.html" 
       class="w-full h-full border-0 bg-white"
       @load="loading = false"
-      @error="() => { loading = false; error = true }"
       allow="fullscreen; autoplay"
     ></iframe>
   </div>
