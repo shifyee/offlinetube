@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 
 const loading = ref(true)
-// Cache busting URL to ensure it doesn't load a cached version of the app
+// Cache buster prevents the browser from loading the old, broken infinite loop
 const iframeSrc = computed(() => `/gams/index.html?v=${Date.now()}`)
 </script>
 
