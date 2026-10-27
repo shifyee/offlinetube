@@ -1,13 +1,13 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { RouterView, useRoute, useRouter } from 'vue-router'
+import { RouterView, useRouter, useRoute } from 'vue-router'
 import { useLibraryStore } from './stores/library'
 import DownloadToasts from './components/DownloadToasts.vue'
 import Sidebar from './components/Sidebar.vue'
 
 const library = useLibraryStore()
-const route = useRoute()
 const router = useRouter()
+const route = useRoute()
 const q = ref('')
 const isSidebarOpen = ref(true)
 const isOnline = ref(navigator.onLine)
@@ -28,18 +28,17 @@ function doSearch() {
   
   const urlRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|youtube\.com\/shorts\/)([^"&?\/\s]{11})/i;
   if (urlRegex.test(q.value)) {
-    router.push({ path: '/downloader', query: { url: q.value } })
+    router.push({ path: '/', query: { url: q.value } })
     q.value = ''
     return
   }
 
-  router.push({ path: '/search', query: { q: q.value } })
+  router.push({ path: '/' })
 }
 </script>
 
 <template>
   <div class="min-h-screen flex bg-bg text-text flex-col">
-    <!-- Offline Banner -->
     <div v-if="!isOnline" class="bg-red-900 text-white text-center text-sm py-1 z-50">
       You are currently offline. Playing downloaded videos only.
     </div>
@@ -57,13 +56,14 @@ function doSearch() {
             <input
               v-model="q"
               type="search"
-              placeholder="Search or paste YouTube URL to download..."
+              placeholder="Search to download or watch a video..."
               class="w-full h-9 px-4 rounded-full bg-surface border border-white/10 focus:outline-none focus:border-white/30 text-sm"
             />
           </form>
         </header>
 
-        <main class="flex-1 p-6">
+        <!-- THE FIX: Conditionally remove padding for the Playables view -->
+        <main class="flex-1" :class="route.name === 'playables' ? '' : 'p-6'">
           <RouterView />
         </main>
       </div>
