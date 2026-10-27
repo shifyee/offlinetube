@@ -13,6 +13,7 @@ const loading = ref(true)
       </div>
     </div>
 
+    <!-- Since we flatten the folder in vite.config.js, the path is exactly /gams/index.html -->
     <iframe 
       src="/gams/index.html" 
       class="w-full h-full border-0 bg-white"
