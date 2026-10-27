@@ -5,7 +5,6 @@ import fs from 'fs'
 import path from 'path'
 import { execSync } from 'child_process'
 
-// Custom plugin to download and unzip the games before building
 function downloadGams() {
   return {
     name: 'download-gams',
@@ -14,13 +13,12 @@ function downloadGams() {
       const zipPath = path.resolve(__dirname, 'gams.zip');
       const targetDir = path.resolve(__dirname, 'public/gams');
 
-      // If the games are already extracted, skip
       if (fs.existsSync(targetDir) && fs.readdirSync(targetDir).length > 0) {
         console.log('Gams folder already exists, skipping download.');
         return;
       }
 
-      console.log('Downloading gams.zip from GitHub Releases...');
+      console.log('Downloading gams.zip...');
       try {
         const res = await fetch(zipUrl);
         if (!res.ok) throw new Error(`Failed to download: ${res.statusText}`);
@@ -28,7 +26,7 @@ function downloadGams() {
         const arrayBuffer = await res.arrayBuffer();
         fs.writeFileSync(zipPath, Buffer.from(arrayBuffer));
 
-        console.log('Unzipping gams into public/gams...');
+        console.log('Unzipping gams...');
         fs.mkdirSync(targetDir, { recursive: true });
         execSync(`unzip -o "${zipPath}" -d "${targetDir}"`);
         
@@ -51,7 +49,7 @@ export default defineConfig({
       manifest: {
         name: 'Offline Tube',
         short_name: 'OfflineTube',
-        description: 'Self-hosted YouTube frontend with offline playback',
+        description: 'Self-hosted YouTube frontend',
         theme_color: '#0f0f0f',
         background_color: '#0f0f0f',
         display: 'standalone',
@@ -67,10 +65,10 @@ export default defineConfig({
           '**/*.{js,css,html,svg,png,ico,woff,woff2,json,mp3,ogg,wasm}',
           'gams/**/*' 
         ],
-        // THE FIX: Increase cache limit from 2MB to 100MB for large game files
         maximumFileSizeToCacheInBytes: 100 * 1024 * 1024, 
         navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api\//],
+        // THE FIX: Ignore /gams/ so the router doesn't hijack the game files
+        navigateFallbackDenylist: [/^\/api\//, /^\/gams\//], 
         runtimeCaching: []
       }
     })
