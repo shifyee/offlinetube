@@ -1,11 +1,9 @@
 const express = require('express');
 const cors = require('cors');
-const { exec, spawn } = require('child_process');
-const util = require('util');
+const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const execPromise = util.promisify(exec);
 
 const app = express();
 app.use(cors());
@@ -25,29 +23,53 @@ if (process.env.YOUTUBE_COOKIES) {
   } catch (e) { console.error('Failed to write cookies:', e); }
 }
 
-function buildYtDlpCmd(args) {
-  const cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
-  
-  // THE FIX: Limit comments to 20 so it doesn't hang forever, and use POT provider
-  const extractorArgs = [
-    'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416',
-    'youtube:max_comments=20,all,0,0'
-  ].join(';');
+function runCommand(cmd, args, timeoutMs = 45000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { detached: true });
+    let stdout = '';
+    let stderr = '';
 
-  return `yt-dlp ${cookieArgs} --no-warnings --no-check-certificates --newline --extractor-args "${extractorArgs}" ${args}`;
+    const timeout = setTimeout(() => {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch (e) { /* ignore */ }
+      reject(new Error('Command timed out'));
+    }, timeoutMs);
+
+    child.stdout.on('data', (data) => { stdout += data.toString(); });
+    child.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    child.on('error', (err) => { clearTimeout(timeout); reject(err); });
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+      if (code === 0) resolve(stdout);
+      else reject(new Error(stderr || `Exited with code ${code}`));
+    });
+  });
 }
 
-async function runYtDlp(args) {
-  const cmd = buildYtDlpCmd(args);
+function buildYtDlpArgs(args, withComments) {
+  const cookieArgs = fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
+  const extractorArgs = withComments
+    ? 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416;youtube:max_comments=20,all,0,0'
+    : 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+
+  return [
+    ...cookieArgs,
+    '--no-warnings',
+    '--no-check-certificates',
+    '--newline',
+    '--extractor-args', extractorArgs,
+    ...args
+  ];
+}
+
+async function runYtDlp(args, timeoutMs = 45000, withComments = true) {
+  const finalArgs = buildYtDlpArgs(args, withComments);
   try {
-    const { stdout } = await execPromise(cmd, { maxBuffer: 1024 * 1024 * 50 });
-    return stdout;
+    return await runCommand('yt-dlp', finalArgs, timeoutMs);
   } catch (e) {
-    // Auto-retry the "page needs to be reloaded" transient error
     if (e.message.includes('The page needs to be reloaded')) {
       await new Promise(r => setTimeout(r, 2000));
-      const { stdout } = await execPromise(cmd, { maxBuffer: 1024 * 1024 * 50 });
-      return stdout;
+      return await runCommand('yt-dlp', finalArgs, timeoutMs);
     }
     throw e;
   }
@@ -58,20 +80,49 @@ app.get('/api/info', async (req, res) => {
   if (!id) return res.status(400).json({ error: 'Missing video ID' });
 
   const url = `https://www.youtube.com/watch?v=${id}`;
-  
+
+  let stdout = null;
+  let lastError = null;
+
+  // Attempt 1: with comments (best UX)
   try {
-    const stdout = await runYtDlp(`--write-comments --dump-json --no-playlist "${url}"`);
-    
+    stdout = await runYtDlp(['--write-comments', '--dump-json', '--no-playlist', url], 45000, true);
+  } catch (e) {
+    lastError = e;
+    console.warn('Attempt with comments failed, retrying without comments:', e.message.substring(0, 200));
+  }
+
+  // Attempt 2: without comments (fallback - downloads still work)
+  if (!stdout) {
+    try {
+      stdout = await runYtDlp(['--dump-json', '--no-playlist', url], 30000, false);
+    } catch (e) {
+      lastError = e;
+      console.error('Both attempts failed:', e.message.substring(0, 200));
+    }
+  }
+
+  if (!stdout) {
+    const errMsg = lastError ? lastError.message : 'Unknown error';
+    if (errMsg.includes('unavailable')) {
+      return res.status(404).json({
+        error: 'This video is unavailable to your YouTube cookies. It may be age-restricted, private, or deleted. Try a different video.',
+        details: errMsg
+      });
+    }
+    return res.status(500).json({ error: 'Failed to fetch metadata.', details: errMsg });
+  }
+
+  try {
     let jsonString = stdout.trim();
     const startIdx = jsonString.indexOf('{');
     const endIdx = jsonString.lastIndexOf('}');
     if (startIdx !== -1 && endIdx !== -1) jsonString = jsonString.substring(startIdx, endIdx + 1);
-    
+
     const info = JSON.parse(jsonString);
-    
     const formats = [];
     const heights = new Map();
-    
+
     info.formats.forEach(f => {
       if (f.height && f.vcodec !== 'none') {
         const size = f.filesize || f.filesize_approx || 0;
@@ -86,7 +137,6 @@ app.get('/api/info', async (req, res) => {
         });
       });
     } else {
-      // Fallback
       formats.push(
         { qualityLabel: '1080p', height: 1080, contentLength: 0, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=1080` },
         { qualityLabel: '720p', height: 720, contentLength: 0, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=720` },
@@ -101,8 +151,8 @@ app.get('/api/info', async (req, res) => {
       videoThumbnails: [{ url: info.thumbnail }], formatStreams: formats
     });
   } catch (error) {
-    console.error('Metadata error:', error);
-    return res.status(500).json({ error: 'Failed to fetch metadata.', details: error.message });
+    console.error('JSON parse error:', error);
+    return res.status(500).json({ error: 'Failed to parse metadata.', details: error.message });
   }
 });
 
@@ -112,21 +162,29 @@ app.get('/api/stream', async (req, res) => {
 
   const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
-  
-  // The exact format string from your 'rip' project
   const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
-  
+
   try {
-    const cmd = buildYtDlpCmd(`-f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`);
-    
+    const args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url], false);
+
     await new Promise((resolve, reject) => {
-      const child = spawn(cmd, { shell: true });
+      const child = spawn('yt-dlp', args, { detached: true });
+      const timeout = setTimeout(() => {
+        try { process.kill(-child.pid, 'SIGKILL'); } catch (e) {}
+        reject(new Error('Download timed out'));
+      }, 600000); // 10 minutes for large 4K files
+
       child.stderr.on('data', (data) => {
         const match = /\[download\]\s+([\d.]+)%/.exec(data.toString());
         if (match) console.log(`Progress: ${match[1]}%`);
       });
-      child.on('error', reject);
-      child.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Exited ${code}`)));
+
+      child.on('error', (err) => { clearTimeout(timeout); reject(err); });
+      child.on('close', (code) => {
+        clearTimeout(timeout);
+        if (code === 0) resolve();
+        else reject(new Error(`Exited ${code}`));
+      });
     });
 
     if (!fs.existsSync(tempFile)) throw new Error('File missing');
@@ -139,7 +197,7 @@ app.get('/api/stream', async (req, res) => {
     const readStream = fs.createReadStream(tempFile);
     readStream.pipe(res);
     readStream.on('end', () => fs.unlink(tempFile, () => {}));
-    
+
   } catch (e) {
     if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
     if (!res.headersSent) res.status(500).json({ error: 'Download failed', details: e.message });
