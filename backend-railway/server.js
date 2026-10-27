@@ -48,9 +48,13 @@ function runCommand(cmd, args, timeoutMs = 45000) {
 
 function buildYtDlpArgs(args, withComments) {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
-  const extractorArgs = withComments
-    ? 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416;youtube:max_comments=20,all,0,0'
-    : 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  
+  // THE FIX: Force web_safari (respects cookies) and use the correct POT arg
+  const extractorArgs = [
+    'youtube:player_client=web_safari',
+    'youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416',
+    withComments ? 'youtube:max_comments=20,all,0,0' : null
+  ].filter(Boolean).join(';');
 
   return [
     ...cookieArgs,
@@ -84,7 +88,7 @@ app.get('/api/info', async (req, res) => {
   let stdout = null;
   let lastError = null;
 
-  // Attempt 1: with comments (best UX)
+  // Attempt 1: with comments
   try {
     stdout = await runYtDlp(['--write-comments', '--dump-json', '--no-playlist', url], 45000, true);
   } catch (e) {
@@ -92,7 +96,7 @@ app.get('/api/info', async (req, res) => {
     console.warn('Attempt with comments failed, retrying without comments:', e.message.substring(0, 200));
   }
 
-  // Attempt 2: without comments (fallback - downloads still work)
+  // Attempt 2: without comments
   if (!stdout) {
     try {
       stdout = await runYtDlp(['--dump-json', '--no-playlist', url], 30000, false);
@@ -106,7 +110,13 @@ app.get('/api/info', async (req, res) => {
     const errMsg = lastError ? lastError.message : 'Unknown error';
     if (errMsg.includes('unavailable')) {
       return res.status(404).json({
-        error: 'This video is unavailable to your YouTube cookies. It may be age-restricted, private, or deleted. Try a different video.',
+        error: 'This video is unavailable to your YouTube cookies. It may be age-restricted, private, or deleted.',
+        details: errMsg
+      });
+    }
+    if (errMsg.includes('Sign in to confirm')) {
+      return res.status(401).json({
+        error: 'YouTube is blocking your IP. Please re-export your cookies or try again later.',
         details: errMsg
       });
     }
