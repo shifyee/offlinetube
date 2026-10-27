@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 
 // Use the exact images you provided
-const pfpUrl = 'https://cdn.discordapp.com/attachments/1293730756262293571/1295178039680262194/sad_bear.png' // Placeholder, replace with your actual image link if needed
+const pfpUrl = 'https://github.com/shifyee/offlinetube/blob/main/pfp.png' // Placeholder, replace with your actual image link if needed
 const bgUrl = 'https://img.magnific.com/premium-photo/very-dark-night-sky-with-rain-rain-falling-high-quality-high-resolution_1124577-15523.jpg?semt=ais_hybrid&w=740&q=80'
 </script>
 
