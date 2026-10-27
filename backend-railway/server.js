@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const util = require('util');
 const fs = require('fs');
 const path = require('path');
@@ -35,14 +35,13 @@ if (process.env.YOUTUBE_COOKIES) {
 function buildYtDlpCmd(args, client = 'default') {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
   
-  // THE FIX: Force SABR formats and disable EJS checks that cause issues on Railway
   const extractorArgs = [
-    'youtube:formats=sabr',          // Force SABR formats
-    'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416', // POT provider
+    'youtube:formats=sabr',
+    'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416',
     `youtube:player_client=${client}`
   ].join(';');
 
-  return `yt-dlp ${cookieArgs} --no-warnings --no-check-certificates --force-ipv4 --extractor-args "${extractorArgs}" ${args}`;
+  return `yt-dlp ${cookieArgs} --no-warnings --no-check-certificates --force-ipv4 --newline --extractor-args "${extractorArgs}" ${args}`;
 }
 
 async function runYtDlp(args, client = 'default') {
@@ -72,7 +71,6 @@ app.get('/api/info', async (req, res) => {
   let metadata = null;
   let lastError = null;
 
-  // 1. Fetch Metadata using --print (never fails due to SABR)
   for (const client of clients) {
     try {
       const stdout = await runYtDlp(
@@ -96,45 +94,64 @@ app.get('/api/info', async (req, res) => {
 
   if (!metadata) {
     return res.status(500).json({ 
-      error: 'Failed to fetch metadata. YouTube is blocking all clients.', 
-      details: lastError ? lastError.message : 'Unknown',
-      stderr: lastError && lastError.stderr ? lastError.stderr : ''
+      error: 'Failed to fetch metadata.', 
+      details: lastError ? lastError.message : 'Unknown'
     });
   }
 
-  // 2. Fetch Resolutions using --list-formats (now that SABR is forced)
+  // THE FIX: Use --dump-json to get exact file sizes
   let formats = [];
   try {
-    const listStdout = await runYtDlp(`--list-formats "${url}"`, 'default');
-    const heights = new Set();
-    listStdout.split('\n').forEach(line => {
-      const match = line.match(/^(\d+)\s+(\w+)\s+(\d+x\d+)\s+(\d+)p/);
-      if (match) heights.add(parseInt(match[4], 10));
+    const jsonStdout = await runYtDlp(`--dump-json --no-playlist "${url}"`, 'default');
+    let jsonString = jsonStdout.trim();
+    const startIdx = jsonString.indexOf('{');
+    const endIdx = jsonString.lastIndexOf('}');
+    if (startIdx !== -1 && endIdx !== -1) jsonString = jsonString.substring(startIdx, endIdx + 1);
+    
+    const info = JSON.parse(jsonString);
+    const heights = new Map();
+
+    info.formats.forEach(f => {
+      if (f.height && f.vcodec !== 'none') {
+        const size = f.filesize || f.filesize_approx || 0;
+        // Store the largest size for this height
+        if (!heights.has(f.height) || heights.get(f.height) < size) {
+          heights.set(f.height, size);
+        }
+      }
     });
 
     if (heights.size > 0) {
-      formats = Array.from(heights)
-        .sort((a, b) => b - a)
-        .map(h => ({
+      formats = Array.from(heights.entries())
+        .sort((a, b) => b[0] - a[0])
+        .map(([h, size]) => ({
           qualityLabel: `${h}p`,
           height: h,
+          contentLength: size,
           container: 'mp4',
           type: 'video/mp4',
           url: `/api/stream?id=${id}&height=${h}`
         }));
     }
   } catch (e) {
-    console.warn('--list-formats failed, using default resolutions');
+    console.warn('--dump-json failed for sizes, falling back to --list-formats');
+    // Fallback to parsing --list-formats if dump-json fails
+    try {
+      const listStdout = await runYtDlp(`--list-formats "${url}"`, 'default');
+      const heights = new Set();
+      listStdout.split('\n').forEach(line => {
+        const match = line.match(/^(\d+)\s+(\w+)\s+(\d+x\d+)\s+(\d+)p/);
+        if (match) heights.add(parseInt(match[4], 10));
+      });
+      formats = Array.from(heights).sort((a, b) => b - a).map(h => ({
+        qualityLabel: `${h}p`, height: h, contentLength: 0, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=${h}`
+      }));
+    } catch (err) {}
   }
 
-  // 3. Fallback resolutions if list-formats fails completely
   if (formats.length === 0) {
     formats = [1080, 720, 480, 360].map(h => ({
-      qualityLabel: `${h}p`,
-      height: h,
-      container: 'mp4',
-      type: 'video/mp4',
-      url: `/api/stream?id=${id}&height=${h}`
+      qualityLabel: `${h}p`, height: h, contentLength: 0, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=${h}`
     }));
   }
 
@@ -152,14 +169,13 @@ app.get('/api/info', async (req, res) => {
 });
 
 app.get('/api/stream', async (req, res) => {
-  const { id } = req.query;
+  const { id, height } = req.query;
   if (!id) return res.status(400).send('Missing parameters');
 
   const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
-  // THE FIX: Use best[ext=mp4]/best to avoid SABR 403 on explicit selectors
-  const formatStr = 'best[ext=mp4]/best';
+  const formatStr = `bv*[height<=${height}]+ba/b[height<=${height}]/b`;
   const clients = ['default', 'web', 'tv', 'android', 'ios', 'mweb', 'web_safari'];
   
   let success = false;
@@ -167,10 +183,24 @@ app.get('/api/stream', async (req, res) => {
 
   for (const client of clients) {
     try {
-      console.log(`[stream] Downloading with client: ${client}`);
+      console.log(`[stream] Downloading ${height}p with client: ${client}`);
       const cmd = buildYtDlpCmd(`-f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`, client);
       
-      await execPromise(cmd, { maxBuffer: 1024 * 1024 * 100, timeout: 300000 });
+      await new Promise((resolve, reject) => {
+        const child = spawn(cmd, { shell: true });
+        
+        child.stderr.on('data', (data) => {
+          const text = data.toString();
+          const match = /\[download\]\s+([\d.]+)%/.exec(text);
+          if (match) console.log(`[stream] Progress: ${match[1]}%`);
+        });
+
+        child.on('error', reject);
+        child.on('close', (code) => {
+          if (code === 0) resolve();
+          else reject(new Error(`yt-dlp exited with code ${code}`));
+        });
+      });
       
       if (fs.existsSync(tempFile)) {
         success = true;
@@ -193,7 +223,7 @@ app.get('/api/stream', async (req, res) => {
   }
 
   const stat = fs.statSync(tempFile);
-  console.log(`[stream] Success! File size: ${(stat.size / 1024 / 1024).toFixed(2)} MB`);
+  console.log(`[stream] Success! Sending ${(stat.size / 1024 / 1024).toFixed(2)} MB to client.`);
 
   res.setHeader('Content-Length', stat.size);
   res.setHeader('Content-Type', 'video/mp4');
