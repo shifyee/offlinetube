@@ -28,10 +28,12 @@ if (process.env.YOUTUBE_COOKIES) {
   } catch (e) { console.error('Failed to write cookies:', e); }
 }
 
-function buildYtDlpCmd(args, client = 'default') {
+function buildYtDlpCmd(args, client = 'tv,mweb') {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
+  
+  // THE FIX: Force SABR formats and use tv,mweb clients
   const extractorArgs = [
-    'youtube:formats=sabr',
+    'youtube:formats=duplicate', // Force duplicate formats to include SABR
     'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416',
     `youtube:player_client=${client}`
   ].join(';');
@@ -39,7 +41,7 @@ function buildYtDlpCmd(args, client = 'default') {
   return `yt-dlp ${cookieArgs} --no-warnings --no-check-certificates --force-ipv4 --newline --extractor-args "${extractorArgs}" ${args}`;
 }
 
-async function runYtDlp(args, client = 'default') {
+async function runYtDlp(args, client = 'tv,mweb') {
   const cmd = buildYtDlpCmd(args, client);
   try {
     const { stdout, stderr } = await execPromise(cmd, { maxBuffer: 1024 * 1024 * 50 });
@@ -59,14 +61,13 @@ app.get('/api/info', async (req, res) => {
   if (!id) return res.status(400).json({ error: 'Missing video ID' });
 
   const url = `https://www.youtube.com/watch?v=${id}`;
-  const clients = ['default', 'web', 'tv', 'android', 'ios', 'mweb', 'web_safari'];
+  const clients = ['tv,mweb', 'tv', 'mweb', 'web_safari'];
   
   let metadata = null;
   let lastError = null;
 
   for (const client of clients) {
     try {
-      // THE FIX: Limit comments to top 20 to prevent timeouts
       const stdout = await runYtDlp(
         `--write-comments --extractor-args "youtube:max_comments=20,all,0,0" --dump-json --no-playlist "${url}"`,
         client
@@ -88,7 +89,7 @@ app.get('/api/info', async (req, res) => {
         comments: (info.comments || []).slice(0, 20).map(c => ({
           commentId: c.id,
           author: c.author,
-          content: c.text
+          text: c.text
         }))
       };
       metadata.formats = info.formats || [];
@@ -106,9 +107,12 @@ app.get('/api/info', async (req, res) => {
   try {
     const heights = new Map();
     metadata.formats.forEach(f => {
+      // Include formats that have a height (both muxed and SABR)
       if (f.height && f.vcodec !== 'none') {
         const size = f.filesize || f.filesize_approx || 0;
-        if (!heights.has(f.height) || heights.get(f.height) < size) heights.set(f.height, size);
+        if (!heights.has(f.height) || heights.get(f.height) < size) {
+          heights.set(f.height, size);
+        }
       }
     });
 
@@ -146,41 +150,68 @@ app.get('/api/stream', async (req, res) => {
   const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
-  const formatStr = `bv*[height<=${height}]+ba/b[height<=${height}]/b`;
-  const clients = ['default', 'web', 'tv', 'android', 'ios', 'mweb', 'web_safari'];
+  // THE FIX: Use the SABR protocol selector
+  const formatStr = `ba[protocol=sabr]+bv[protocol=sabr]/bv*[height<=${height}]+ba/b[height<=${height}]/b`;
+  const clients = ['tv,mweb', 'tv', 'mweb', 'web_safari'];
   
   let success = false;
   let lastError = null;
 
   for (const client of clients) {
     try {
+      console.log(`[stream] Downloading ${height}p with client: ${client}`);
       const cmd = buildYtDlpCmd(`-f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`, client);
+      
       await new Promise((resolve, reject) => {
         const child = spawn(cmd, { shell: true });
+        child.stderr.on('data', (data) => {
+          const text = data.toString();
+          const match = /\[download\]\s+([\d.]+)%/.exec(text);
+          if (match) console.log(`[stream] Progress: ${match[1]}%`);
+        });
         child.on('error', reject);
-        child.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Exited with ${code}`)));
+        child.on('close', (code) => {
+          if (code === 0) resolve();
+          else reject(new Error(`yt-dlp exited with code ${code}`));
+        });
       });
-      if (fs.existsSync(tempFile)) { success = true; break; }
+      
+      if (fs.existsSync(tempFile)) {
+        success = true;
+        break;
+      }
     } catch (e) {
       lastError = e;
-      if (fs.existsSync(tempFile)) try { fs.unlinkSync(tempFile); } catch {}
+      console.warn(`[stream] Client ${client} failed.`);
+      if (fs.existsSync(tempFile)) {
+        try { fs.unlinkSync(tempFile); } catch {}
+      }
     }
   }
 
   if (!success) {
-    if (!res.headersSent) return res.status(500).json({ error: 'All download clients failed', details: lastError.message });
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'All download clients failed', details: lastError.message });
+    }
     return;
   }
 
   const stat = fs.statSync(tempFile);
+  console.log(`[stream] Success! Sending ${(stat.size / 1024 / 1024).toFixed(2)} MB to client.`);
+
   res.setHeader('Content-Length', stat.size);
   res.setHeader('Content-Type', 'video/mp4');
   res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
 
   const readStream = fs.createReadStream(tempFile);
   readStream.pipe(res);
-  readStream.on('end', () => fs.unlink(tempFile, () => {}));
+
+  readStream.on('end', () => {
+    fs.unlink(tempFile, (err) => { if (err) console.error('Failed to delete temp file:', err); });
+  });
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Railway backend running on ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Railway yt-dlp backend running on port ${PORT}`);
+});
