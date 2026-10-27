@@ -16,20 +16,17 @@ if (process.env.YOUTUBE_COOKIES) {
   try {
     let cookiesContent = process.env.YOUTUBE_COOKIES
       .replace(/\\n/g, '\n')
-      .replace(/\r\n/g, '\n');
-
-    cookiesContent = cookiesContent.split('\n').map(line => {
-      if (line.startsWith('#') || line.trim() === '') return line;
-      return line.replace(/ {2,}/g, '\t');
-    }).join('\n');
-
+      .replace(/\r\n/g, '\n')
+      .split('\n')
+      .map(line => line.startsWith('#') || line.trim() === '' ? line : line.replace(/ {2,}/g, '\t'))
+      .join('\n');
     fs.writeFileSync(COOKIES_FILE, cookiesContent);
-    console.log('Successfully loaded cookies.');
+    console.log('Successfully loaded and formatted cookies.');
   } catch (e) { console.error('Failed to write cookies:', e); }
 }
 
-// EXACT logic from your working "rip" project
 function buildYtDlpCmd(args) {
+  // EXACT logic from the user's working 'rip' project
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
   return `yt-dlp ${cookieArgs} --no-warnings --no-check-certificates --newline ${args}`;
 }
@@ -56,9 +53,7 @@ app.get('/api/info', async (req, res) => {
   const url = `https://www.youtube.com/watch?v=${id}`;
   
   try {
-    const stdout = await runYtDlp(
-      `--write-comments --extractor-args "youtube:max_comments=20,all,0,0" --dump-json --no-playlist "${url}"`
-    );
+    const stdout = await runYtDlp(`--write-comments --extractor-args "youtube:max_comments=20,all,0,0" --dump-json --no-playlist "${url}"`);
     
     let jsonString = stdout.trim();
     const startIdx = jsonString.indexOf('{');
@@ -70,30 +65,20 @@ app.get('/api/info', async (req, res) => {
     const formats = [];
     const heights = new Map();
     
-    // Parse formats for the UI
     info.formats.forEach(f => {
       if (f.height && f.vcodec !== 'none') {
         const size = f.filesize || f.filesize_approx || 0;
-        if (!heights.has(f.height) || heights.get(f.height) < size) {
-          heights.set(f.height, size);
-        }
+        if (!heights.has(f.height) || heights.get(f.height) < size) heights.set(f.height, size);
       }
     });
 
     if (heights.size > 0) {
       Array.from(heights.entries()).sort((a, b) => b[0] - a[0]).forEach(([h, size]) => {
         formats.push({
-          qualityLabel: `${h}p`, 
-          height: h, 
-          contentLength: size, 
-          container: 'mp4', 
-          type: 'video/mp4', 
-          url: `/api/stream?id=${id}&height=${h}`
+          qualityLabel: `${h}p`, height: h, contentLength: size, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=${h}`
         });
       });
-    }
-
-    if (formats.length === 0) {
+    } else {
       formats.push(
         { qualityLabel: '1080p', height: 1080, contentLength: 0, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=1080` },
         { qualityLabel: '720p', height: 720, contentLength: 0, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=720` },
@@ -102,20 +87,10 @@ app.get('/api/info', async (req, res) => {
     }
 
     return res.json({
-      videoId: id,
-      title: info.title,
-      author: info.uploader,
-      authorId: '',
-      authorAvatar: null,
-      lengthSeconds: info.duration || 0,
-      description: info.description || '',
-      comments: (info.comments || []).slice(0, 20).map(c => ({
-        commentId: c.id,
-        author: c.author,
-        content: c.text || c.content || ''
-      })),
-      videoThumbnails: [{ url: info.thumbnail }],
-      formatStreams: formats
+      videoId: id, title: info.title, author: info.uploader, authorId: '',
+      authorAvatar: null, lengthSeconds: info.duration || 0, description: info.description || '',
+      comments: (info.comments || []).slice(0, 20).map(c => ({ commentId: c.id, author: c.author, content: c.text || c.content || '' })),
+      videoThumbnails: [{ url: info.thumbnail }], formatStreams: formats
     });
   } catch (error) {
     console.error('Metadata error:', error);
@@ -130,32 +105,25 @@ app.get('/api/stream', async (req, res) => {
   const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
-  // EXACT format selector from your working "rip" project
+  // EXACT format string from the user's working 'rip' project
   const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
   
   try {
-    console.log(`[stream] Downloading ${height}p...`);
     const cmd = buildYtDlpCmd(`-f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`);
     
     await new Promise((resolve, reject) => {
       const child = spawn(cmd, { shell: true });
       child.stderr.on('data', (data) => {
-        const text = data.toString();
-        const match = /\[download\]\s+([\d.]+)%/.exec(text);
-        if (match) console.log(`[stream] Progress: ${match[1]}%`);
+        const match = /\[download\]\s+([\d.]+)%/.exec(data.toString());
+        if (match) console.log(`Progress: ${match[1]}%`);
       });
       child.on('error', reject);
-      child.on('close', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`yt-dlp exited with code ${code}`));
-      });
+      child.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Exited ${code}`)));
     });
-    
-    if (!fs.existsSync(tempFile)) throw new Error('Download failed, file not found');
+
+    if (!fs.existsSync(tempFile)) throw new Error('File missing');
 
     const stat = fs.statSync(tempFile);
-    console.log(`[stream] Success! Sending ${(stat.size / 1024 / 1024).toFixed(2)} MB.`);
-
     res.setHeader('Content-Length', stat.size);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
@@ -165,13 +133,10 @@ app.get('/api/stream', async (req, res) => {
     readStream.on('end', () => fs.unlink(tempFile, () => {}));
     
   } catch (e) {
-    console.error('[stream] Error:', e);
     if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
     if (!res.headersSent) res.status(500).json({ error: 'Download failed', details: e.message });
   }
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  console.log(`Railway yt-dlp backend running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Railway running on ${PORT}`));
