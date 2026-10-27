@@ -14,11 +14,7 @@ const loading = ref(true)
       </div>
     </div>
 
-    <!-- 
-      The games load directly from your public folder.
-      Because they are served from the same domain, they bypass any restrictions
-      and feel like a seamless part of the app.
-    -->
+    <!-- Games iframe -->
     <iframe 
       src="/gams/index.html" 
       class="w-full h-full border-0"
