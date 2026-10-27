@@ -30,6 +30,16 @@ function downloadGams() {
         fs.mkdirSync(targetDir, { recursive: true });
         execSync(`unzip -o "${zipPath}" -d "${targetDir}"`);
         
+        // Flatten the folder: if it extracted to /gams/Gams-main/, move contents to /gams/
+        const files = fs.readdirSync(targetDir);
+        if (files.length === 1 && fs.statSync(path.join(targetDir, files[0])).isDirectory()) {
+          const subfolder = path.join(targetDir, files[0]);
+          fs.readdirSync(subfolder).forEach(f => {
+            fs.renameSync(path.join(subfolder, f), path.join(targetDir, f));
+          });
+          fs.rmdirSync(subfolder);
+        }
+
         fs.unlinkSync(zipPath);
         console.log('Gams downloaded and extracted successfully.');
       } catch (error) {
@@ -67,7 +77,7 @@ export default defineConfig({
         ],
         maximumFileSizeToCacheInBytes: 100 * 1024 * 1024, 
         navigateFallback: '/index.html',
-        // THE FIX: Absolutely deny fallback for /gams/
+        // DENY fallback for gams so it doesn't load index.html inside the iframe
         navigateFallbackDenylist: [/^\/api\//, /^\/gams\//], 
         runtimeCaching: []
       }
