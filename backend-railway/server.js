@@ -27,8 +27,13 @@ if (process.env.YOUTUBE_COOKIES) {
 
 function buildYtDlpCmd(args) {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
-  // THE ONLY extractor-arg we need: point to the local POT provider (which your Dockerfile starts)
-  const extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  
+  // THE CRITICAL FIX: Force web_safari client and use the POT provider
+  const extractorArgs = [
+    'youtube:player_client=web_safari',
+    'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416'
+  ].join(';');
+
   return `yt-dlp ${cookieArgs} --no-warnings --no-check-certificates --newline --extractor-args "${extractorArgs}" ${args}`;
 }
 
@@ -106,7 +111,7 @@ app.get('/api/stream', async (req, res) => {
   const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
-  // The exact format string from your 'rip' project
+  // Use a format string that handles HLS and MP4
   const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
   
   try {
