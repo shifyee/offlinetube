@@ -28,24 +28,21 @@ function downloadGams() {
 
         console.log('Unzipping gams with adm-zip...');
         const zip = new AdmZip(zipPath);
-        // Extract everything to a temp directory first
         const tempDir = path.resolve(__dirname, 'temp_gams');
         zip.extractAllTo(tempDir, true);
 
-        // Find the actual folder (usually Gams-main)
+        // Flatten the folder: move contents of Gams-main to public/gams
         const contents = fs.readdirSync(tempDir);
         let sourceDir = tempDir;
         if (contents.length === 1 && fs.statSync(path.join(tempDir, contents[0])).isDirectory()) {
           sourceDir = path.join(tempDir, contents[0]);
         }
 
-        // Move everything to public/gams
         fs.mkdirSync(targetDir, { recursive: true });
         for (const file of fs.readdirSync(sourceDir)) {
           fs.renameSync(path.join(sourceDir, file), path.join(targetDir, file));
         }
 
-        // Cleanup
         fs.rmSync(tempDir, { recursive: true, force: true });
         fs.unlinkSync(zipPath);
         console.log('Gams extracted successfully.');
@@ -84,6 +81,7 @@ export default defineConfig({
         ],
         maximumFileSizeToCacheInBytes: 100 * 1024 * 1024, 
         navigateFallback: '/index.html',
+        // THE CRITICAL FIX: Deny fallback for /gams/
         navigateFallbackDenylist: [/^\/api\//, /^\/gams\//], 
         runtimeCaching: [
           {
