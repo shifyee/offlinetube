@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { api, bestThumbnail, formatDuration } from '../api/piped-client'
+import { api, bestThumbnail, formatDuration, formatBytes } from '../api/piped-client'
 import { useDownloadsStore } from '../stores/downloads'
 import { useLibraryStore } from '../stores/library'
 import DownloadModal from '../components/DownloadModal.vue'
@@ -15,6 +15,8 @@ const loading = ref(false)
 const error = ref(null)
 const video = ref(null)
 const showModal = ref(false)
+const showComments = ref(false)
+const isExpanded = ref(false)
 
 const isAlreadyDownloaded = computed(() => 
   video.value ? library.videos.some(v => v.id === video.value.videoId && v.status === 'complete') : false
@@ -25,8 +27,8 @@ async function processUrl() {
   loading.value = true
   error.value = null
   video.value = null
+  showComments.value = false
 
-  // Extract Video ID from various YouTube URL formats
   const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|youtube\.com\/shorts\/)([^"&?\/\s]{11})/i;
   const match = urlInput.value.match(regex);
 
@@ -39,8 +41,10 @@ async function processUrl() {
   const videoId = match[1]
 
   try {
-    // Fetch metadata using our multi-tier fallback API
     video.value = await api.video(videoId)
+    if (!video.value.formatStreams || video.value.formatStreams.length === 0) {
+      error.value = "No downloadable streams found. The backend might have failed to extract them."
+    }
   } catch (e) {
     error.value = String(e.message || e)
   } finally {
@@ -51,12 +55,10 @@ async function processUrl() {
 function startDownload() {
   if (video.value && video.value.formatStreams?.length > 0) {
     showModal.value = true
-  } else {
-    alert("No downloadable streams found for this video. The proxy APIs might be temporarily blocked.")
   }
 }
 
-function goToPlayer() {
+function goToOfflinePlayer() {
   if (video.value) {
     router.push(`/watch/${video.value.videoId}`)
   }
@@ -64,84 +66,103 @@ function goToPlayer() {
 </script>
 
 <template>
-  <div class="max-w-4xl mx-auto px-4 py-12 flex flex-col items-center">
+  <div class="max-w-5xl mx-auto px-4 py-8 flex flex-col items-center">
     
-    <div class="text-center mb-10">
-      <div class="w-20 h-20 bg-accent/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
-        <svg viewBox="0 0 24 24" class="w-10 h-10 fill-accent"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-      </div>
-      <h1 class="text-3xl font-bold mb-3">YouTube Downloader</h1>
-      <p class="text-muted">Paste a YouTube link below to save it directly to your offline library.</p>
-    </div>
-
-    <!-- URL Input -->
-    <div class="w-full max-w-2xl flex gap-2 mb-8">
-      <input
-        v-model="urlInput"
-        @keyup.enter="processUrl"
-        type="text"
-        placeholder="https://www.youtube.com/watch?v=..."
-        class="flex-1 h-14 px-5 rounded-xl bg-surface border border-white/10 focus:outline-none focus:border-accent text-lg transition-colors"
-      />
-      <button 
-        @click="processUrl" 
-        :disabled="loading || !urlInput.trim()"
-        class="h-14 px-8 rounded-xl bg-accent hover:bg-red-700 text-white font-bold text-lg transition-colors disabled:opacity-50 flex items-center gap-2"
-      >
-        <svg v-if="loading" class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-        {{ loading ? 'Fetching...' : 'Fetch' }}
-      </button>
-    </div>
-
-    <!-- Error Message -->
-    <div v-if="error" class="w-full max-w-2xl p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-center mb-8">
-      {{ error }}
-    </div>
-
-    <!-- Video Result Card -->
-    <div v-if="video" class="w-full max-w-2xl bg-surface rounded-2xl overflow-hidden shadow-2xl border border-white/5">
-      <div class="flex flex-col sm:flex-row gap-4 p-4">
-        <!-- Thumbnail -->
-        <div class="relative w-full sm:w-64 aspect-video bg-black rounded-lg overflow-hidden shrink-0">
-          <img v-if="bestThumbnail(video)" :src="bestThumbnail(video).url" class="w-full h-full object-cover" />
-          <span v-if="video.lengthSeconds" class="absolute bottom-2 right-2 bg-black/80 text-xs px-2 py-1 rounded font-mono">
-            {{ formatDuration(video.lengthSeconds) }}
-          </span>
-        </div>
-
-        <!-- Metadata & Actions -->
-        <div class="flex flex-col justify-between flex-1 min-w-0">
-          <div>
-            <h2 class="font-bold text-lg line-clamp-2 leading-tight mb-2">{{ video.title }}</h2>
-            <p class="text-sm text-muted mb-1 flex items-center gap-2">
-              <span v-if="video.authorAvatar" class="w-5 h-5 rounded-full overflow-hidden inline-block bg-surface-2">
-                <img :src="video.authorAvatar" class="w-full h-full object-cover" />
-              </span>
-              {{ video.author }}
-            </p>
-          </div>
-          
-          <div class="flex items-center gap-3 mt-4">
-            <button 
-              @click="startDownload"
-              class="flex-1 h-10 rounded-lg bg-accent hover:bg-red-700 text-white font-bold text-sm transition-colors flex items-center justify-center gap-2"
-            >
-              <svg viewBox="0 0 24 24" class="w-4 h-4 fill-current"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-              Download
-            </button>
-            <button 
-              @click="goToPlayer"
-              class="flex-1 h-10 rounded-lg bg-surface-2 hover:bg-surface-3 text-white font-bold text-sm transition-colors flex items-center justify-center gap-2"
-            >
-              <svg viewBox="0 0 24 24" class="w-4 h-4 fill-current"><path d="M8 5v14l11-7z"/></svg>
-              Watch Online
-            </button>
-          </div>
-        </div>
+    <!-- Input Area -->
+    <div class="w-full max-w-2xl text-center mb-8">
+      <h1 class="text-3xl font-bold mb-3">Watch & Download</h1>
+      <p class="text-muted mb-6">Paste a YouTube link to watch online or save it for offline viewing.</p>
+      
+      <div class="flex gap-2">
+        <input
+          v-model="urlInput"
+          @keyup.enter="processUrl"
+          type="text"
+          placeholder="Search to download or watch a video..."
+          class="flex-1 h-14 px-5 rounded-xl bg-surface border border-white/10 focus:outline-none focus:border-accent text-lg transition-colors"
+        />
+        <button 
+          @click="processUrl" 
+          :disabled="loading || !urlInput.trim()"
+          class="h-14 px-8 rounded-xl bg-accent hover:bg-red-700 text-white font-bold text-lg transition-colors disabled:opacity-50 flex items-center gap-2"
+        >
+          <svg v-if="loading" class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+          {{ loading ? 'Fetching...' : 'Fetch' }}
+        </button>
       </div>
       
-      <div v-if="isAlreadyDownloaded" class="bg-green-500/10 text-green-400 text-sm p-3 text-center border-t border-green-500/20">
-        ✓ This video is already saved in your offline library.
+      <div v-if="error" class="mt-4 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm text-left">
+        {{ error }}
+      </div>
+    </div>
+
+    <!-- Unified Video Experience -->
+    <div v-if="video" class="w-full max-w-4xl bg-surface rounded-2xl overflow-hidden shadow-2xl border border-white/5">
+      
+      <!-- Player -->
+      <div class="aspect-video bg-black">
+        <iframe 
+          :src="`https://www.youtube.com/embed/${video.videoId}?autoplay=0&rel=0`"
+          class="w-full h-full border-0"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowfullscreen
+        ></iframe>
+      </div>
+
+      <div class="p-6">
+        <h2 class="font-bold text-xl mb-2">{{ video.title }}</h2>
+        <p class="text-sm text-muted mb-4">By {{ video.author }}</p>
+
+        <!-- Action Row -->
+        <div class="flex items-center gap-3 mb-6">
+          <button 
+            @click="startDownload"
+            class="h-10 px-6 rounded-lg bg-accent hover:bg-red-700 text-white font-bold text-sm transition-colors flex items-center gap-2"
+          >
+            <svg viewBox="0 0 24 24" class="w-4 h-4 fill-current"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+            Download Options
+          </button>
+          
+          <button 
+            v-if="isAlreadyDownloaded"
+            @click="goToOfflinePlayer"
+            class="h-10 px-6 rounded-lg bg-surface-2 hover:bg-surface-3 text-white font-bold text-sm transition-colors flex items-center gap-2 border border-white/10"
+          >
+            <svg viewBox="0 0 24 24" class="w-4 h-4 fill-current"><path d="M8 5v14l11-7z"/></svg>
+            Play Offline
+          </button>
+        </div>
+
+        <!-- Description -->
+        <div 
+          v-if="video.description"
+          class="bg-surface-2 rounded-xl p-4 text-sm cursor-pointer hover:bg-surface-3 transition-colors mb-4"
+          @click="isExpanded = !isExpanded"
+        >
+          <div :class="isExpanded ? 'whitespace-pre-wrap' : 'line-clamp-2 text-muted'">
+            {{ video.description }}
+          </div>
+        </div>
+
+        <!-- Comments Toggle -->
+        <button 
+          v-if="video.comments?.length"
+          @click="showComments = !showComments" 
+          class="text-sm font-bold text-accent hover:text-red-400"
+        >
+          {{ showComments ? 'Hide comments' : `Show ${video.comments.length} comments` }}
+        </button>
+
+        <!-- Comments List -->
+        <div v-if="showComments && video.comments?.length" class="mt-4 space-y-3">
+          <div v-for="c in video.comments" :key="c.commentId" class="bg-surface-2 p-3 rounded-lg flex gap-3">
+            <div class="w-8 h-8 rounded-full bg-surface-3 flex items-center justify-center font-bold text-muted shrink-0">{{ c.author.charAt(0) }}</div>
+            <div>
+              <div class="text-xs font-bold">{{ c.author }}</div>
+              <div class="text-sm text-gray-300 mt-1 whitespace-pre-wrap">{{ c.content }}</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
