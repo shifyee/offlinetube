@@ -23,7 +23,13 @@ export default defineConfig({
         ]
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,ico,woff,woff2}'],
+        // Cache EVERYTHING inside the gams folder, plus standard assets
+        globPatterns: [
+          '**/*.{js,css,html,svg,png,ico,woff,woff2,json,mp3,ogg,wasm}',
+          'gams/**/*' 
+        ],
+        // Increase the maximum file size to cache to 10MB just in case a game has a big asset
+        maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: []
