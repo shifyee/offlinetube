@@ -23,18 +23,24 @@ if (process.env.YOUTUBE_COOKIES) {
   } catch (e) { console.error('Failed to write cookies:', e); }
 }
 
-// We REMOVED the timeout. It will wait as long as needed.
-function runCommand(cmd, args) {
+// 15 second strict timeout for metadata to prevent the app from hanging
+function runCommand(cmd, args, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args);
     let stdout = '';
     let stderr = '';
 
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error('Command timed out'));
+    }, timeoutMs);
+
     child.stdout.on('data', (data) => { stdout += data.toString(); });
     child.stderr.on('data', (data) => { stderr += data.toString(); });
 
-    child.on('error', (err) => reject(err));
+    child.on('error', (err) => { clearTimeout(timeout); reject(err); });
     child.on('close', (code) => {
+      clearTimeout(timeout);
       if (code === 0) resolve(stdout);
       else reject(new Error(stderr || `Exited with code ${code}`));
     });
@@ -44,10 +50,10 @@ function runCommand(cmd, args) {
 function buildYtDlpArgs(args) {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
   
-  // THE FIX: 20 comments, ZERO replies. This guarantees speed and prevents hanging.
+  // THE FIX: Only use POT provider and limit comments to 20 (0 replies)
+  // NO forced player clients! This lets yt-dlp fetch 4K natively.
   const extractorArgs = [
-    'youtube:player_client=web_safari',
-    'youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416',
+    'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416',
     'youtube:max_comments=20,0,0,0'
   ].join(';');
 
@@ -66,11 +72,27 @@ app.get('/api/info', async (req, res) => {
   if (!id) return res.status(400).json({ error: 'Missing video ID' });
 
   const url = `https://www.youtube.com/watch?v=${id}`;
+  let stdout = null;
+
+  // Attempt 1: Try to fetch with comments (strict 15s timeout)
+  try {
+    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', '--no-playlist', url]), 15000);
+  } catch (e) {
+    console.warn('Attempt with comments timed out. Retrying without comments for speed...');
+  }
+
+  // Attempt 2: If it timed out, just get the video data so the user can still download
+  if (!stdout) {
+    try {
+      const argsWithoutComments = buildYtDlpArgs(['--dump-json', '--no-playlist', url]).filter(a => !a.includes('max_comments'));
+      stdout = await runCommand('yt-dlp', argsWithoutComments, 15000);
+    } catch (e) {
+      console.error('Both attempts failed:', e.message);
+      return res.status(500).json({ error: 'Failed to fetch video.', details: e.message });
+    }
+  }
 
   try {
-    // No fallback, no timeout. It just works.
-    const stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', '--no-playlist', url]));
-
     let jsonString = stdout.trim();
     const startIdx = jsonString.indexOf('{');
     const endIdx = jsonString.lastIndexOf('}');
@@ -80,7 +102,7 @@ app.get('/api/info', async (req, res) => {
     const formats = [];
     const heights = new Map();
 
-    // Parse ALL formats (up to 4K)
+    // Extract ALL formats (including 4K)
     info.formats.forEach(f => {
       if (f.height && f.vcodec !== 'none') {
         const size = f.filesize || f.filesize_approx || 0;
@@ -105,13 +127,12 @@ app.get('/api/info', async (req, res) => {
     return res.json({
       videoId: id, title: info.title, author: info.uploader, authorId: '',
       authorAvatar: null, lengthSeconds: info.duration || 0, description: info.description || '',
-      // Limit to 20 comments
       comments: (info.comments || []).slice(0, 20).map(c => ({ commentId: c.id, author: c.author, content: c.text || c.content || '' })),
       videoThumbnails: [{ url: info.thumbnail }], formatStreams: formats
     });
   } catch (error) {
-    console.error('Metadata error:', error);
-    return res.status(500).json({ error: 'Failed to fetch metadata.', details: error.message });
+    console.error('JSON parse error:', error);
+    return res.status(500).json({ error: 'Failed to parse metadata.', details: error.message });
   }
 });
 
@@ -124,7 +145,7 @@ app.get('/api/stream', async (req, res) => {
   const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
 
   try {
-    const args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url]);
+    const args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url]).filter(a => !a.includes('max_comments'));
 
     await new Promise((resolve, reject) => {
       const child = spawn('yt-dlp', args);
