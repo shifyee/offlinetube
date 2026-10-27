@@ -28,9 +28,11 @@ if (process.env.YOUTUBE_COOKIES) {
   } catch (e) { console.error('Failed to write cookies:', e); }
 }
 
-function buildYtDlpCmd(args, client = 'default') {
+function buildYtDlpCmd(args, client = 'tv') {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
+  // Force SABR formats and use TV/MWEB clients which respect cookies
   const extractorArgs = [
+    'youtube:formats=duplicate',
     'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416',
     `youtube:player_client=${client}`
   ].join(';');
@@ -38,10 +40,10 @@ function buildYtDlpCmd(args, client = 'default') {
   return `yt-dlp ${cookieArgs} --no-warnings --no-check-certificates --force-ipv4 --newline --extractor-args "${extractorArgs}" ${args}`;
 }
 
-async function runYtDlp(args, client = 'default') {
+async function runYtDlp(args, client = 'tv') {
   const cmd = buildYtDlpCmd(args, client);
   try {
-    const { stdout, stderr } = await execPromise(cmd, { maxBuffer: 1024 * 1024 * 50 });
+    const { stdout } = await execPromise(cmd, { maxBuffer: 1024 * 1024 * 50 });
     return stdout;
   } catch (e) {
     if (e.message.includes('The page needs to be reloaded')) {
@@ -58,7 +60,8 @@ app.get('/api/info', async (req, res) => {
   if (!id) return res.status(400).json({ error: 'Missing video ID' });
 
   const url = `https://www.youtube.com/watch?v=${id}`;
-  const clients = ['default', 'web', 'tv', 'android', 'ios'];
+  // FIX: TV and MWEB respect cookies for 1080p
+  const clients = ['tv', 'mweb', 'web_safari', 'android', 'ios'];
   
   let metadata = null;
   let lastError = null;
@@ -83,10 +86,11 @@ app.get('/api/info', async (req, res) => {
         lengthSeconds: info.duration || 0,
         thumbnail: info.thumbnail,
         description: info.description || '',
+        // FIX: Map text to content correctly
         comments: (info.comments || []).slice(0, 20).map(c => ({
           commentId: c.id,
           author: c.author,
-          text: c.text
+          content: c.text || c.content || ''
         }))
       };
       metadata.formats = info.formats || [];
@@ -146,9 +150,8 @@ app.get('/api/stream', async (req, res) => {
   const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
-  // THE EXACT FORMAT STRING FROM YOUR RIP PROJECT
   const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
-  const clients = ['default', 'web', 'tv', 'android', 'ios'];
+  const clients = ['tv', 'mweb', 'web_safari', 'android', 'ios'];
   
   let success = false;
   let lastError = null;
