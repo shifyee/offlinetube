@@ -67,7 +67,7 @@ export default defineConfig({
         ],
         maximumFileSizeToCacheInBytes: 100 * 1024 * 1024, 
         navigateFallback: '/index.html',
-        // THE FIX: Ignore /gams/ so the router doesn't hijack the game files
+        // THE FIX: Absolutely deny fallback for /gams/
         navigateFallbackDenylist: [/^\/api\//, /^\/gams\//], 
         runtimeCaching: []
       }
