@@ -13,7 +13,7 @@ function downloadGams() {
       const zipPath = path.resolve(__dirname, 'gams.zip');
       const targetDir = path.resolve(__dirname, 'public/gams');
 
-      if (fs.existsSync(path.join(targetDir, 'Gams.html'))) {
+      if (fs.existsSync(path.join(targetDir, 'Gams-main', 'Gams.html'))) {
         console.log('Gams already extracted.');
         return;
       }
@@ -21,52 +21,21 @@ function downloadGams() {
       console.log('Downloading gams.zip...');
       try {
         const res = await fetch(zipUrl);
+        if (!res.ok) throw new Error(`Failed to download: ${res.statusText}`);
+        
         const arrayBuffer = await res.arrayBuffer();
         fs.writeFileSync(zipPath, Buffer.from(arrayBuffer));
 
         console.log('Unzipping gams...');
         const zip = new AdmZip(zipPath);
-        const tempDir = path.resolve(__dirname, 'temp_gams');
-        zip.extractAllTo(tempDir, true);
-
-        // Find the folder with Gams.html
-        let sourceDir = tempDir;
-        const findHtml = (dir) => {
-            if (fs.readdirSync(dir).includes('Gams.html')) return true;
-            for (const file of fs.readdirSync(dir)) {
-                const full = path.join(dir, file);
-                if (fs.statSync(full).isDirectory() && findHtml(full)) return true;
-            }
-            return false;
-        };
-        const findSource = (dir) => {
-            if (fs.readdirSync(dir).includes('Gams.html')) return dir;
-            for (const file of fs.readdirSync(dir)) {
-                const full = path.join(dir, file);
-                if (fs.statSync(full).isDirectory()) {
-                    const found = findSource(full);
-                    if (found) return found;
-                }
-            }
-            return null;
-        };
-        const actualSource = findSource(tempDir) || tempDir;
-
-        // Copy everything to public/gams
+        
+        // Extract everything to public/gams WITHOUT flattening
+        // This preserves Gams-main/i.js and Gams-main/Gams.html as siblings
         fs.mkdirSync(targetDir, { recursive: true });
-        const copy = (src, dest) => {
-            if (fs.statSync(src).isDirectory()) {
-                if (!fs.existsSync(dest)) fs.mkdirSync(dest);
-                fs.readdirSync(src).forEach(f => copy(path.join(src, f), path.join(dest, f)));
-            } else {
-                fs.copyFileSync(src, dest);
-            }
-        };
-        copy(actualSource, targetDir);
+        zip.extractAllTo(targetDir, true);
 
-        fs.rmSync(tempDir, { recursive: true, force: true });
         fs.unlinkSync(zipPath);
-        console.log('Gams extracted perfectly to public/gams.');
+        console.log('Gams extracted successfully to public/gams/Gams-main/');
       } catch (error) {
         console.error('Error extracting Gams:', error);
       }
