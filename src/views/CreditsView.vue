@@ -2,8 +2,8 @@
 import { ref } from 'vue'
 
 // Use the exact images you provided
-const pfpUrl = 'https://ibb.co/5X2hYF4K' // Placeholder, replace with your actual image link if needed
-const bgUrl = 'https://chatgpt.com/7a33231f-08bf-4c4c-ac4c-a6c988638c61'
+const pfpUrl = 'https://i.ibb.co/7xbtg4Ck/pfp.png' // Placeholder, replace with your actual image link if needed
+const bgUrl = 'https://i.ibb.co/xt26gF4d/780f40e1-e80f-4c5e-902a-75ec4d4c3ee7.png'
 </script>
 
 <template>
