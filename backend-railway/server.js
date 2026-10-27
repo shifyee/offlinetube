@@ -28,11 +28,10 @@ if (process.env.YOUTUBE_COOKIES) {
 function buildYtDlpCmd(args) {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
   
-  // THE CRITICAL FIX: Force web_safari client and use the POT provider
-  const extractorArgs = [
-    'youtube:player_client=web_safari',
-    'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416'
-  ].join(';');
+  // THE FIX: ONLY use the POT provider. No player_client overrides!
+  // This allows yt-dlp to automatically pick the best clients (ios, web, etc.) 
+  // just like it did in your working "rip" project.
+  const extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
 
   return `yt-dlp ${cookieArgs} --no-warnings --no-check-certificates --newline --extractor-args "${extractorArgs}" ${args}`;
 }
@@ -43,6 +42,7 @@ async function runYtDlp(args) {
     const { stdout } = await execPromise(cmd, { maxBuffer: 1024 * 1024 * 50 });
     return stdout;
   } catch (e) {
+    // Auto-retry the "page needs to be reloaded" transient error
     if (e.message.includes('The page needs to be reloaded')) {
       await new Promise(r => setTimeout(r, 2000));
       const { stdout } = await execPromise(cmd, { maxBuffer: 1024 * 1024 * 50 });
@@ -85,6 +85,7 @@ app.get('/api/info', async (req, res) => {
         });
       });
     } else {
+      // Fallback just in case
       formats.push(
         { qualityLabel: '1080p', height: 1080, contentLength: 0, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=1080` },
         { qualityLabel: '720p', height: 720, contentLength: 0, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=720` },
@@ -111,7 +112,7 @@ app.get('/api/stream', async (req, res) => {
   const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
-  // Use a format string that handles HLS and MP4
+  // EXACT format string from your working "rip" project
   const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
   
   try {
