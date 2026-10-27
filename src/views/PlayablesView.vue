@@ -1,7 +1,9 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 
 const loading = ref(true)
+// Cache busting URL to ensure it doesn't load a cached version of the app
+const iframeSrc = computed(() => `/gams/index.html?v=${Date.now()}`)
 </script>
 
 <template>
@@ -13,9 +15,8 @@ const loading = ref(true)
       </div>
     </div>
 
-    <!-- Since we flatten the folder in vite.config.js, the path is exactly /gams/index.html -->
     <iframe 
-      src="/gams/index.html" 
+      :src="iframeSrc" 
       class="w-full h-full border-0 bg-white"
       @load="loading = false"
       allow="fullscreen; autoplay"
