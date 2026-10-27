@@ -5,28 +5,25 @@ const loading = ref(true)
 </script>
 
 <template>
-  <div class="h-screen w-full flex flex-col bg-bg">
-    <div class="p-4 border-b border-white/5 flex items-center justify-between shrink-0">
-      <h1 class="text-xl font-bold flex items-center gap-2">
-        <svg viewBox="0 0 24 24" class="w-6 h-6 fill-accent"><path d="M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-10 7H8v3H6v-3H3v-2h3V8h2v3h3v2zm4.5 2c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm4 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
-        Playables
-      </h1>
-      <span class="text-xs text-muted">Fully Offline Games</span>
-    </div>
-    
-    <div class="flex-1 relative">
-      <div v-if="loading" class="absolute inset-0 flex items-center justify-center text-muted">
-        Loading games...
+  <div class="w-full h-[calc(100vh-3.5rem)] flex flex-col bg-bg relative">
+    <!-- Loading overlay -->
+    <div v-if="loading" class="absolute inset-0 flex items-center justify-center bg-bg z-10 text-muted">
+      <div class="flex flex-col items-center gap-3">
+        <svg class="animate-spin h-8 w-8 text-accent" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+        <span>Loading Offline Games...</span>
       </div>
-      <!-- 
-        Place the Gams files in public/gams/ 
-        This iframe runs them completely locally.
-      -->
-      <iframe 
-        src="/gams/index.html" 
-        class="w-full h-full border-0"
-        @load="loading = false"
-      ></iframe>
     </div>
+
+    <!-- 
+      The games load directly from your public folder.
+      Because they are served from the same domain, they bypass any restrictions
+      and feel like a seamless part of the app.
+    -->
+    <iframe 
+      src="/gams/index.html" 
+      class="w-full h-full border-0"
+      @load="loading = false"
+      allow="fullscreen; autoplay"
+    ></iframe>
   </div>
 </template>
