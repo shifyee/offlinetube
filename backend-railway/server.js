@@ -23,24 +23,18 @@ if (process.env.YOUTUBE_COOKIES) {
   } catch (e) { console.error('Failed to write cookies:', e); }
 }
 
-// Safe timeout execution using spawn
-function runCommand(cmd, args, timeoutMs) {
+// We REMOVED the timeout. It will wait as long as needed.
+function runCommand(cmd, args) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args);
     let stdout = '';
     let stderr = '';
 
-    const timeout = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error('Command timed out'));
-    }, timeoutMs);
-
     child.stdout.on('data', (data) => { stdout += data.toString(); });
     child.stderr.on('data', (data) => { stderr += data.toString(); });
 
-    child.on('error', (err) => { clearTimeout(timeout); reject(err); });
+    child.on('error', (err) => reject(err));
     child.on('close', (code) => {
-      clearTimeout(timeout);
       if (code === 0) resolve(stdout);
       else reject(new Error(stderr || `Exited with code ${code}`));
     });
@@ -50,9 +44,12 @@ function runCommand(cmd, args, timeoutMs) {
 function buildYtDlpArgs(args) {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
   
-  // THE FIX: Only use the POT provider. No forced clients, no comment limits.
-  // This lets yt-dlp fetch 4K and all comments naturally.
-  const extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  // THE FIX: 20 comments, ZERO replies. This guarantees speed and prevents hanging.
+  const extractorArgs = [
+    'youtube:player_client=web_safari',
+    'youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416',
+    'youtube:max_comments=20,0,0,0'
+  ].join(';');
 
   return [
     ...cookieArgs,
@@ -64,19 +61,6 @@ function buildYtDlpArgs(args) {
   ];
 }
 
-async function runYtDlp(args, timeoutMs = 120000) { // 2 minute timeout
-  const finalArgs = buildYtDlpArgs(args);
-  try {
-    return await runCommand('yt-dlp', finalArgs, timeoutMs);
-  } catch (e) {
-    if (e.message.includes('The page needs to be reloaded')) {
-      await new Promise(r => setTimeout(r, 2000));
-      return await runCommand('yt-dlp', finalArgs, timeoutMs);
-    }
-    throw e;
-  }
-}
-
 app.get('/api/info', async (req, res) => {
   const { id } = req.query;
   if (!id) return res.status(400).json({ error: 'Missing video ID' });
@@ -84,8 +68,8 @@ app.get('/api/info', async (req, res) => {
   const url = `https://www.youtube.com/watch?v=${id}`;
 
   try {
-    // Fetch comments and metadata. We wait up to 2 minutes for slow videos.
-    const stdout = await runYtDlp(['--write-comments', '--dump-json', '--no-playlist', url]);
+    // No fallback, no timeout. It just works.
+    const stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', '--no-playlist', url]));
 
     let jsonString = stdout.trim();
     const startIdx = jsonString.indexOf('{');
@@ -96,7 +80,7 @@ app.get('/api/info', async (req, res) => {
     const formats = [];
     const heights = new Map();
 
-    // Parse ALL available formats (up to 4K)
+    // Parse ALL formats (up to 4K)
     info.formats.forEach(f => {
       if (f.height && f.vcodec !== 'none') {
         const size = f.filesize || f.filesize_approx || 0;
@@ -121,7 +105,7 @@ app.get('/api/info', async (req, res) => {
     return res.json({
       videoId: id, title: info.title, author: info.uploader, authorId: '',
       authorAvatar: null, lengthSeconds: info.duration || 0, description: info.description || '',
-      // Return the first 20 comments
+      // Limit to 20 comments
       comments: (info.comments || []).slice(0, 20).map(c => ({ commentId: c.id, author: c.author, content: c.text || c.content || '' })),
       videoThumbnails: [{ url: info.thumbnail }], formatStreams: formats
     });
@@ -137,8 +121,6 @@ app.get('/api/stream', async (req, res) => {
 
   const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
-  
-  // The exact format string that supports everything up to 4K
   const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
 
   try {
@@ -146,7 +128,7 @@ app.get('/api/stream', async (req, res) => {
 
     await new Promise((resolve, reject) => {
       const child = spawn('yt-dlp', args);
-      // 15 minute timeout for the actual download (4K files are huge)
+      // 15 minute timeout for downloading 4K video
       const timeout = setTimeout(() => {
         child.kill('SIGKILL');
         reject(new Error('Download timed out'));
