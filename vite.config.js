@@ -13,18 +13,21 @@ function downloadGams() {
       const zipPath = path.resolve(__dirname, 'gams.zip');
       const targetDir = path.resolve(__dirname, 'public/gams');
 
-      // Check if Gams.html is already there to skip redownloading
+      // If Gams.html is already there, skip
       if (fs.existsSync(path.join(targetDir, 'Gams.html'))) {
-        console.log('Gams already extracted perfectly.');
+        console.log('Gams already extracted.');
         return;
       }
 
-      console.log('Downloading and extracting gams...');
+      console.log('Downloading gams.zip...');
       try {
         const res = await fetch(zipUrl);
+        if (!res.ok) throw new Error(`Failed to download: ${res.statusText}`);
+        
         const arrayBuffer = await res.arrayBuffer();
         fs.writeFileSync(zipPath, Buffer.from(arrayBuffer));
 
+        console.log('Unzipping gams with adm-zip...');
         const zip = new AdmZip(zipPath);
         const tempDir = path.resolve(__dirname, 'temp_gams');
         zip.extractAllTo(tempDir, true);
@@ -44,7 +47,7 @@ function downloadGams() {
         };
         
         findGamsHtml(tempDir);
-        if (!sourceDir) throw new Error('Could not find Gams.html in gams.zip');
+        if (!sourceDir) throw new Error('Could not find Gams.html');
 
         // Copy contents to public/gams
         fs.mkdirSync(targetDir, { recursive: true });
@@ -58,6 +61,7 @@ function downloadGams() {
         };
         copyRecursiveSync(sourceDir, targetDir);
 
+        // Cleanup
         fs.rmSync(tempDir, { recursive: true, force: true });
         fs.unlinkSync(zipPath);
         console.log('Gams extracted successfully.');
