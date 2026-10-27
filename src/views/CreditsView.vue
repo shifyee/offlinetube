@@ -3,7 +3,7 @@ import { ref } from 'vue'
 
 // Use the exact images you provided
 const pfpUrl = 'https://ibb.co/5X2hYF4K' // Placeholder, replace with your actual image link if needed
-const bgUrl = 'https://img.magnific.com/premium-photo/very-dark-night-sky-with-rain-rain-falling-high-quality-high-resolution_1124577-15523.jpg?semt=ais_hybrid&w=740&q=80'
+const bgUrl = 'blob:https://chatgpt.com/7a33231f-08bf-4c4c-ac4c-a6c988638c61'
 </script>
 
 <template>
