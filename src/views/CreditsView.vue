@@ -58,7 +58,7 @@ const bgUrl = 'https://i.ibb.co/xt26gF4d/780f40e1-e80f-4c5e-902a-75ec4d4c3ee7.pn
       </div>
       
       <div class="mt-10 text-xs text-gray-500">
-        Built with ❤️ for the offline web.
+        built cause chromeblacks are useless offline, unless you've met me...
       </div>
     </div>
   </div>
