@@ -23,7 +23,6 @@ if (process.env.YOUTUBE_COOKIES) {
   } catch (e) { console.error('Failed to write cookies:', e); }
 }
 
-// Safe timeout execution using spawn (20 seconds to allow for comments)
 function runCommand(cmd, args, timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args);
@@ -49,13 +48,8 @@ function runCommand(cmd, args, timeoutMs = 20000) {
 
 function buildYtDlpArgs(args, fetchComments) {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
-  
-  // THE FIX: No forced player clients (restores 4K).
-  // Correct comment syntax: 20 comments, 20 parents, 0 replies.
   let extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
-  if (fetchComments) {
-    extractorArgs += ';youtube:max_comments=20,20,0,0';
-  }
+  if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
   return [
     ...cookieArgs,
@@ -73,31 +67,12 @@ app.get('/api/info', async (req, res) => {
 
   const url = `https://www.youtube.com/watch?v=${id}`;
   let stdout = null;
-  let lastError = null;
 
-  // Try with comments. Give it 20 seconds.
   try {
     stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', '--no-playlist', url], true), 20000);
   } catch (e) {
-    lastError = e;
-    console.warn('Attempt with comments failed, retrying without comments...');
-  }
-
-  // If comments fail (or timeout), try without comments to at least get the video.
-  if (!stdout) {
-    try {
-      stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', '--no-playlist', url], false), 15000);
-    } catch (e) {
-      lastError = e;
-      console.error('Both attempts failed:', e.message.substring(0, 200));
-    }
-  }
-
-  if (!stdout) {
-    const errMsg = lastError ? lastError.message : 'Unknown error';
-    // Ensure CORS headers are sent even on error
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    return res.status(500).json({ error: 'Failed to fetch metadata.', details: errMsg });
+    console.warn('Comments timed out, fetching without comments...');
+    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', '--no-playlist', url], false), 15000);
   }
 
   try {
@@ -110,7 +85,6 @@ app.get('/api/info', async (req, res) => {
     const formats = [];
     const heights = new Map();
 
-    // Extract ALL formats (including 4K)
     info.formats.forEach(f => {
       if (f.height && f.vcodec !== 'none') {
         const size = f.filesize || f.filesize_approx || 0;
@@ -124,12 +98,6 @@ app.get('/api/info', async (req, res) => {
           qualityLabel: `${h}p`, height: h, contentLength: size, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=${h}`
         });
       });
-    } else {
-      formats.push(
-        { qualityLabel: '2160p', height: 2160, contentLength: 0, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=2160` },
-        { qualityLabel: '1080p', height: 1080, contentLength: 0, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=1080` },
-        { qualityLabel: '720p', height: 720, contentLength: 0, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=720` }
-      );
     }
 
     return res.json({
@@ -139,8 +107,6 @@ app.get('/api/info', async (req, res) => {
       videoThumbnails: [{ url: info.thumbnail }], formatStreams: formats
     });
   } catch (error) {
-    console.error('JSON parse error:', error);
-    res.setHeader('Access-Control-Allow-Origin', '*');
     return res.status(500).json({ error: 'Failed to parse metadata.', details: error.message });
   }
 });
@@ -156,13 +122,13 @@ app.get('/api/stream', async (req, res) => {
   try {
     const args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url], false);
 
+    // Download to temp file and wait for completion
     await new Promise((resolve, reject) => {
       const child = spawn('yt-dlp', args);
-      // 15 minute timeout for downloading 4K video
       const timeout = setTimeout(() => {
         child.kill('SIGKILL');
         reject(new Error('Download timed out'));
-      }, 900000);
+      }, 900000); // 15 minutes
 
       child.stderr.on('data', (data) => {
         const match = /\[download\]\s+([\d.]+)%/.exec(data.toString());
@@ -184,16 +150,14 @@ app.get('/api/stream', async (req, res) => {
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
 
+    // Send the file to the client
     const readStream = fs.createReadStream(tempFile);
     readStream.pipe(res);
     readStream.on('end', () => fs.unlink(tempFile, () => {}));
 
   } catch (e) {
     if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
-    if (!res.headersSent) {
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.status(500).json({ error: 'Download failed', details: e.message });
-    }
+    if (!res.headersSent) res.status(500).json({ error: 'Download failed', details: e.message });
   }
 });
 
