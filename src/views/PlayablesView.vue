@@ -5,7 +5,7 @@ const loading = ref(true)
 </script>
 
 <template>
-  <div class="w-full h-[calc(100vh-3.5rem)] flex flex-col bg-bg relative">
+  <div class="w-full h-full flex flex-col bg-bg relative">
     <!-- Loading overlay -->
     <div v-if="loading" class="absolute inset-0 flex items-center justify-center bg-bg z-10 text-muted">
       <div class="flex flex-col items-center gap-3">
@@ -15,11 +15,12 @@ const loading = ref(true)
     </div>
 
     <!-- 
-      THE FIX: The extracted files are inside 'Gams-main', so we update the path 
+      The games are extracted into Gams-main, so we point the iframe there.
+      h-[calc(100vh-3.5rem)] ensures it fills the space below the header.
     -->
     <iframe 
       src="/gams/Gams-main/index.html" 
-      class="w-full h-full border-0"
+      class="w-full h-[calc(100vh-3.5rem)] border-0 bg-white"
       @load="loading = false"
       allow="fullscreen; autoplay"
     ></iframe>
