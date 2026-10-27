@@ -36,8 +36,6 @@ async function load(id) {
   upNext.value = []
   comments.value = []
   showComments.value = false
-  
-  // Reset interaction states on new video load
   isLiked.value = false
   isCopied.value = false
   
@@ -51,7 +49,7 @@ async function load(id) {
       authorId: localVideo.authorId,
       authorAvatar: null,
       lengthSeconds: localVideo.lengthSeconds,
-      description: localVideo.description || 'This video is saved in your offline library.',
+      description: localVideo.description || 'No description saved.',
       comments: localVideo.comments || [],
       videoThumbnails: localVideo.thumbnail ? [{ url: localVideo.thumbnail }] : [],
       formatStreams: [{ url: 'offline' }]
@@ -88,21 +86,16 @@ async function loadComments() {
   catch (e) { comments.value = [{ commentId: '_e', author: 'Error', content: String(e.message || e) }] }
 }
 
-// Interaction functions
 function toggleLike() {
   isLiked.value = !isLiked.value
 }
 
 async function shareVideo() {
   try {
-    // Get the current page URL (e.g., https://offlinetube.pages.dev/watch/VIDEO_ID)
     const shareUrl = window.location.href
     await navigator.clipboard.writeText(shareUrl)
-    
     isCopied.value = true
-    setTimeout(() => {
-      isCopied.value = false
-    }, 2000)
+    setTimeout(() => { isCopied.value = false }, 2000)
   } catch (err) {
     console.error('Failed to copy text: ', err)
   }
@@ -132,18 +125,18 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
         
         <div class="flex flex-wrap items-center justify-between gap-4 mt-3 border-b border-white/10 pb-4">
           <div class="flex items-center gap-3">
-            <component :is="video.authorId ? 'RouterLink' : 'div'" :to="video.authorId ? `/channel/${video.authorId}` : null" class="w-11 h-11 rounded-full bg-surface-2 flex items-center justify-center text-lg font-bold text-muted shrink-0 overflow-hidden">
+            <div class="w-11 h-11 rounded-full bg-surface-2 flex items-center justify-center text-lg font-bold text-muted shrink-0 overflow-hidden">
               <img v-if="video.authorAvatar" :src="video.authorAvatar" @error="handleAvatarError" class="w-full h-full object-cover" />
               <span v-else>{{ video.author?.charAt(0) || '?' }}</span>
-            </component>
+            </div>
             <div>
-              <component :is="video.authorId ? 'RouterLink' : 'span'" :to="video.authorId ? `/channel/${video.authorId}` : null" class="font-bold hover:text-white block">{{ video.author }}</component>
+              <div class="font-bold">{{ video.author }}</div>
               <span class="text-xs text-muted">{{ isOffline ? 'Saved Offline' : 'Visit Channel' }}</span>
             </div>
           </div>
 
           <div class="flex items-center gap-2">
-            <!-- Like / Dislike Buttons -->
+            <!-- Like / Dislike -->
             <div class="flex items-center bg-surface rounded-full overflow-hidden border border-white/10">
               <button 
                 @click="toggleLike"
@@ -155,13 +148,12 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
                 </svg>
                 <span class="text-sm font-medium">Like</span>
               </button>
-              
               <button class="px-4 py-1.5 hover:bg-surface-2 text-muted hover:text-white transition-colors">
                 <svg viewBox="0 0 24 24" class="w-5 h-5 fill-current"><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>
               </button>
             </div>
             
-            <!-- Share Button -->
+            <!-- Share -->
             <button 
               @click="shareVideo"
               class="flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-medium transition-all border"
@@ -169,7 +161,6 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
             >
               <svg v-if="!isCopied" viewBox="0 0 24 24" class="w-5 h-5 fill-current"><path d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
               <svg v-else viewBox="0 0 24 24" class="w-5 h-5 fill-current"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>
-              
               {{ isCopied ? 'Copied!' : 'Share' }}
             </button>
 
@@ -180,6 +171,7 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
           </div>
         </div>
 
+        <!-- Description -->
         <div class="mt-4 bg-surface rounded-xl p-4 text-sm cursor-pointer hover:bg-surface-2 transition-colors" @click="isExpanded = !isExpanded">
           <div class="font-bold text-xs text-muted mb-1">
             {{ video.lengthSeconds ? formatDuration(video.lengthSeconds) : 'Unknown length' }} · {{ isOffline ? 'Offline Library' : 'Streamed on ' + new Date().toLocaleDateString() }}
@@ -189,12 +181,13 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
           </div>
         </div>
 
+        <!-- Comments -->
         <button @click="loadComments" class="mt-6 font-bold text-sm text-accent hover:text-red-400">
           {{ showComments ? 'Hide comments' : 'Show comments' }}
         </button>
 
         <div v-if="showComments" class="mt-4 space-y-4">
-          <div v-if="!video.comments?.length && !comments.length" class="text-muted text-sm">No comments.</div>
+          <div v-if="(!video.comments?.length && !comments.length)" class="text-muted text-sm">No comments saved.</div>
           
           <!-- Offline Comments -->
           <template v-if="isOffline && video.comments?.length">
@@ -221,6 +214,7 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
       </div>
     </div>
 
+    <!-- Up Next Sidebar -->
     <div class="w-96 shrink-0 hidden lg:block">
       <h2 class="font-bold text-lg mb-4">{{ isOffline ? 'Up Next (Offline)' : 'Up Next' }}</h2>
       <div class="space-y-3">
