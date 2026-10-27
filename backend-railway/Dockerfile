@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y \
 # Install Deno (JavaScript runtime for the EJS solver)
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
-# Install the EJS plugin and the nightly yt-dlp via pip
+# Install the EJS plugin and the latest nightly yt-dlp via pip
 RUN pip3 install --break-system-packages --force-reinstall --pre "yt-dlp[default]" yt-dlp-ejs
 
 # Clone and build the POT provider
@@ -33,5 +33,5 @@ ENV YTDLP=/usr/local/bin/yt-dlp
 ENV NODE_ENV=production
 EXPOSE 8080
 
-# Start the POT provider in the background, then start the server
-CMD ["sh", "-c", "node /pot-provider/server/build/main.js & node server.js"]
+# Start the POT provider, update yt-dlp, then start the server
+CMD ["sh", "-c", "node /pot-provider/server/build/main.js & yt-dlp -U >/dev/null 2>&1 || true; node server.js"]
