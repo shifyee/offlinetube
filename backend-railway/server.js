@@ -28,20 +28,14 @@ if (process.env.YOUTUBE_COOKIES) {
   } catch (e) { console.error('Failed to write cookies:', e); }
 }
 
-function buildYtDlpCmd(args, client = 'tv') {
+// EXACT logic from your working "rip" project
+function buildYtDlpCmd(args) {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? `--cookies "${COOKIES_FILE}"` : '';
-  // Force SABR formats and use TV/MWEB clients which respect cookies
-  const extractorArgs = [
-    'youtube:formats=duplicate',
-    'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416',
-    `youtube:player_client=${client}`
-  ].join(';');
-
-  return `yt-dlp ${cookieArgs} --no-warnings --no-check-certificates --force-ipv4 --newline --extractor-args "${extractorArgs}" ${args}`;
+  return `yt-dlp ${cookieArgs} --no-warnings --no-check-certificates --newline ${args}`;
 }
 
-async function runYtDlp(args, client = 'tv') {
-  const cmd = buildYtDlpCmd(args, client);
+async function runYtDlp(args) {
+  const cmd = buildYtDlpCmd(args);
   try {
     const { stdout } = await execPromise(cmd, { maxBuffer: 1024 * 1024 * 50 });
     return stdout;
@@ -60,54 +54,24 @@ app.get('/api/info', async (req, res) => {
   if (!id) return res.status(400).json({ error: 'Missing video ID' });
 
   const url = `https://www.youtube.com/watch?v=${id}`;
-  // FIX: TV and MWEB respect cookies for 1080p
-  const clients = ['tv', 'mweb', 'web_safari', 'android', 'ios'];
   
-  let metadata = null;
-  let lastError = null;
-
-  for (const client of clients) {
-    try {
-      const stdout = await runYtDlp(
-        `--write-comments --extractor-args "youtube:max_comments=20,all,0,0" --dump-json --no-playlist "${url}"`,
-        client
-      );
-      
-      let jsonString = stdout.trim();
-      const startIdx = jsonString.indexOf('{');
-      const endIdx = jsonString.lastIndexOf('}');
-      if (startIdx !== -1 && endIdx !== -1) jsonString = jsonString.substring(startIdx, endIdx + 1);
-      
-      const info = JSON.parse(jsonString);
-      
-      metadata = {
-        title: info.title,
-        author: info.uploader,
-        lengthSeconds: info.duration || 0,
-        thumbnail: info.thumbnail,
-        description: info.description || '',
-        // FIX: Map text to content correctly
-        comments: (info.comments || []).slice(0, 20).map(c => ({
-          commentId: c.id,
-          author: c.author,
-          content: c.text || c.content || ''
-        }))
-      };
-      metadata.formats = info.formats || [];
-      break;
-    } catch (e) {
-      lastError = e;
-    }
-  }
-
-  if (!metadata) {
-    return res.status(500).json({ error: 'Failed to fetch metadata.', details: lastError ? lastError.message : 'Unknown' });
-  }
-
-  let formats = [];
   try {
+    const stdout = await runYtDlp(
+      `--write-comments --extractor-args "youtube:max_comments=20,all,0,0" --dump-json --no-playlist "${url}"`
+    );
+    
+    let jsonString = stdout.trim();
+    const startIdx = jsonString.indexOf('{');
+    const endIdx = jsonString.lastIndexOf('}');
+    if (startIdx !== -1 && endIdx !== -1) jsonString = jsonString.substring(startIdx, endIdx + 1);
+    
+    const info = JSON.parse(jsonString);
+    
+    const formats = [];
     const heights = new Map();
-    metadata.formats.forEach(f => {
+    
+    // Parse formats for the UI
+    info.formats.forEach(f => {
       if (f.height && f.vcodec !== 'none') {
         const size = f.filesize || f.filesize_approx || 0;
         if (!heights.has(f.height) || heights.get(f.height) < size) {
@@ -117,30 +81,46 @@ app.get('/api/info', async (req, res) => {
     });
 
     if (heights.size > 0) {
-      formats = Array.from(heights.entries()).sort((a, b) => b[0] - a[0]).map(([h, size]) => ({
-        qualityLabel: `${h}p`, height: h, contentLength: size, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=${h}`
-      }));
+      Array.from(heights.entries()).sort((a, b) => b[0] - a[0]).forEach(([h, size]) => {
+        formats.push({
+          qualityLabel: `${h}p`, 
+          height: h, 
+          contentLength: size, 
+          container: 'mp4', 
+          type: 'video/mp4', 
+          url: `/api/stream?id=${id}&height=${h}`
+        });
+      });
     }
-  } catch (e) { console.warn('Failed to parse sizes'); }
 
-  if (formats.length === 0) {
-    formats = [1080, 720, 480, 360].map(h => ({
-      qualityLabel: `${h}p`, height: h, contentLength: 0, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=${h}`
-    }));
+    if (formats.length === 0) {
+      formats.push(
+        { qualityLabel: '1080p', height: 1080, contentLength: 0, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=1080` },
+        { qualityLabel: '720p', height: 720, contentLength: 0, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=720` },
+        { qualityLabel: '360p', height: 360, contentLength: 0, container: 'mp4', type: 'video/mp4', url: `/api/stream?id=${id}&height=360` }
+      );
+    }
+
+    return res.json({
+      videoId: id,
+      title: info.title,
+      author: info.uploader,
+      authorId: '',
+      authorAvatar: null,
+      lengthSeconds: info.duration || 0,
+      description: info.description || '',
+      comments: (info.comments || []).slice(0, 20).map(c => ({
+        commentId: c.id,
+        author: c.author,
+        content: c.text || c.content || ''
+      })),
+      videoThumbnails: [{ url: info.thumbnail }],
+      formatStreams: formats
+    });
+  } catch (error) {
+    console.error('Metadata error:', error);
+    return res.status(500).json({ error: 'Failed to fetch metadata.', details: error.message });
   }
-
-  return res.json({
-    videoId: id,
-    title: metadata.title,
-    author: metadata.author,
-    authorId: '',
-    authorAvatar: null,
-    lengthSeconds: metadata.lengthSeconds,
-    description: metadata.description,
-    comments: metadata.comments,
-    videoThumbnails: [{ url: metadata.thumbnail }],
-    formatStreams: formats
-  });
 });
 
 app.get('/api/stream', async (req, res) => {
@@ -150,64 +130,45 @@ app.get('/api/stream', async (req, res) => {
   const tempFile = path.join('/tmp', `ytdl-${crypto.randomBytes(4).toString('hex')}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
+  // EXACT format selector from your working "rip" project
   const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
-  const clients = ['tv', 'mweb', 'web_safari', 'android', 'ios'];
   
-  let success = false;
-  let lastError = null;
-
-  for (const client of clients) {
-    try {
-      console.log(`[stream] Downloading ${height}p with client: ${client}`);
-      const cmd = buildYtDlpCmd(`-f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`, client);
-      
-      await new Promise((resolve, reject) => {
-        const child = spawn(cmd, { shell: true });
-        child.stderr.on('data', (data) => {
-          const text = data.toString();
-          const match = /\[download\]\s+([\d.]+)%/.exec(text);
-          if (match) console.log(`[stream] Progress: ${match[1]}%`);
-        });
-        child.on('error', reject);
-        child.on('close', (code) => {
-          if (code === 0) resolve();
-          else reject(new Error(`yt-dlp exited with code ${code}`));
-        });
+  try {
+    console.log(`[stream] Downloading ${height}p...`);
+    const cmd = buildYtDlpCmd(`-f "${formatStr}" --merge-output-format mp4 -o "${tempFile}" "${url}"`);
+    
+    await new Promise((resolve, reject) => {
+      const child = spawn(cmd, { shell: true });
+      child.stderr.on('data', (data) => {
+        const text = data.toString();
+        const match = /\[download\]\s+([\d.]+)%/.exec(text);
+        if (match) console.log(`[stream] Progress: ${match[1]}%`);
       });
-      
-      if (fs.existsSync(tempFile)) {
-        success = true;
-        break;
-      }
-    } catch (e) {
-      lastError = e;
-      console.warn(`[stream] Client ${client} failed.`);
-      if (fs.existsSync(tempFile)) {
-        try { fs.unlinkSync(tempFile); } catch {}
-      }
-    }
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`yt-dlp exited with code ${code}`));
+      });
+    });
+    
+    if (!fs.existsSync(tempFile)) throw new Error('Download failed, file not found');
+
+    const stat = fs.statSync(tempFile);
+    console.log(`[stream] Success! Sending ${(stat.size / 1024 / 1024).toFixed(2)} MB.`);
+
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+
+    const readStream = fs.createReadStream(tempFile);
+    readStream.pipe(res);
+    readStream.on('end', () => fs.unlink(tempFile, () => {}));
+    
+  } catch (e) {
+    console.error('[stream] Error:', e);
+    if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+    if (!res.headersSent) res.status(500).json({ error: 'Download failed', details: e.message });
   }
-
-  if (!success) {
-    if (!res.headersSent) {
-      return res.status(500).json({ error: 'All download clients failed', details: lastError.message });
-    }
-    return;
-  }
-
-  const stat = fs.statSync(tempFile);
-  console.log(`[stream] Success! Sending ${(stat.size / 1024 / 1024).toFixed(2)} MB to client.`);
-
-  res.setHeader('Content-Length', stat.size);
-  res.setHeader('Content-Type', 'video/mp4');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
-
-  const readStream = fs.createReadStream(tempFile);
-  readStream.pipe(res);
-
-  readStream.on('end', () => {
-    fs.unlink(tempFile, (err) => { if (err) console.error('Failed to delete temp file:', err); });
-  });
 });
 
 const PORT = process.env.PORT || 8080;
