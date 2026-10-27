@@ -12,36 +12,43 @@ function downloadGams() {
       const zipUrl = 'https://github.com/shifyee/offlinetube/releases/download/v1.0/gams.zip';
       const zipPath = path.resolve(__dirname, 'gams.zip');
       const targetDir = path.resolve(__dirname, 'public/gams');
-
+      
+      // If it already exists, skip
       if (fs.existsSync(path.join(targetDir, 'index.html'))) {
-        console.log('Games already extracted correctly.');
+        console.log('Gams already extracted.');
         return;
       }
 
-      console.log('Downloading gams.zip...');
+      console.log('Downloading gams...');
       try {
         const res = await fetch(zipUrl);
         if (!res.ok) throw new Error(`Failed to download: ${res.statusText}`);
-        
         const arrayBuffer = await res.arrayBuffer();
         fs.writeFileSync(zipPath, Buffer.from(arrayBuffer));
 
-        console.log('Unzipping gams...');
-        fs.mkdirSync(targetDir, { recursive: true });
-        execSync(`unzip -o "${zipPath}" -d "${targetDir}"`);
-        
-        // Flatten the folder if it extracted to Gams-main
-        const files = fs.readdirSync(targetDir);
-        if (files.length === 1 && fs.statSync(path.join(targetDir, files[0])).isDirectory()) {
-          const subfolder = path.join(targetDir, files[0]);
-          fs.readdirSync(subfolder).forEach(f => {
-            fs.renameSync(path.join(subfolder, f), path.join(targetDir, f));
-          });
-          fs.rmdirSync(subfolder);
+        console.log('Unzipping...');
+        // Unzip to a temp folder
+        const tempDir = path.resolve(__dirname, 'temp_gams');
+        fs.mkdirSync(tempDir, { recursive: true });
+        execSync(`unzip -o "${zipPath}" -d "${tempDir}"`);
+
+        // Find the actual folder (usually Gams-main)
+        const contents = fs.readdirSync(tempDir);
+        let sourceDir = tempDir;
+        if (contents.length === 1 && fs.statSync(path.join(tempDir, contents[0])).isDirectory()) {
+          sourceDir = path.join(tempDir, contents[0]);
         }
 
+        // Move everything to public/gams
+        fs.mkdirSync(targetDir, { recursive: true });
+        for (const file of fs.readdirSync(sourceDir)) {
+          fs.renameSync(path.join(sourceDir, file), path.join(targetDir, file));
+        }
+
+        // Cleanup
+        fs.rmSync(tempDir, { recursive: true, force: true });
         fs.unlinkSync(zipPath);
-        console.log('Gams downloaded and extracted successfully.');
+        console.log('Gams extracted successfully.');
       } catch (error) {
         console.error('Error setting up Gams:', error);
       }
@@ -77,9 +84,19 @@ export default defineConfig({
         ],
         maximumFileSizeToCacheInBytes: 100 * 1024 * 1024, 
         navigateFallback: '/index.html',
-        // CRITICAL FIX: Deny fallback for /gams/ so the Service Worker doesn't loop
         navigateFallbackDenylist: [/^\/api\//, /^\/gams\//], 
-        runtimeCaching: []
+        // NEW: Cache YouTube thumbnails offline
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/i\.ytimg\.com\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'youtube-thumbnails',
+              expiration: { maxEntries: 100, maxAgeSeconds: 30 * 24 * 60 * 60 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+        ],
       }
     })
   ]
