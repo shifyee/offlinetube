@@ -7,8 +7,21 @@ const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 const COOKIES_FILE = '/tmp/cookies.txt';
+const jobs = new Map();
+
+// Clean up old jobs every 30 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, job] of jobs) {
+    if (now - job.createdAt > 3600000) {
+      if (job.file && fs.existsSync(job.file)) fs.unlinkSync(job.file);
+      jobs.delete(id);
+    }
+  }
+}, 1800000);
 
 if (process.env.YOUTUBE_COOKIES) {
   try {
@@ -21,29 +34,6 @@ if (process.env.YOUTUBE_COOKIES) {
     fs.writeFileSync(COOKIES_FILE, cookiesContent);
     console.log('Successfully loaded cookies.');
   } catch (e) { console.error('Failed to write cookies:', e); }
-}
-
-function runCommand(cmd, args, timeoutMs = 20000) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args);
-    let stdout = '';
-    let stderr = '';
-
-    const timeout = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error('Command timed out'));
-    }, timeoutMs);
-
-    child.stdout.on('data', (data) => { stdout += data.toString(); });
-    child.stderr.on('data', (data) => { stderr += data.toString(); });
-
-    child.on('error', (err) => { clearTimeout(timeout); reject(err); });
-    child.on('close', (code) => {
-      clearTimeout(timeout);
-      if (code === 0) resolve(stdout);
-      else reject(new Error(stderr || `Exited with code ${code}`));
-    });
-  });
 }
 
 function buildYtDlpArgs(args, fetchComments) {
@@ -61,6 +51,27 @@ function buildYtDlpArgs(args, fetchComments) {
   ];
 }
 
+function runCommand(cmd, args, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args);
+    let stdout = '';
+    let stderr = '';
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error('Command timed out'));
+    }, timeoutMs);
+
+    child.stdout.on('data', (data) => { stdout += data.toString(); });
+    child.stderr.on('data', (data) => { stderr += data.toString(); });
+    child.on('error', (err) => { clearTimeout(timeout); reject(err); });
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+      if (code === 0) resolve(stdout);
+      else reject(new Error(stderr || `Exited with code ${code}`));
+    });
+  });
+}
+
 app.get('/api/info', async (req, res) => {
   const { id } = req.query;
   if (!id) return res.status(400).json({ error: 'Missing video ID' });
@@ -69,7 +80,7 @@ app.get('/api/info', async (req, res) => {
   let stdout = null;
 
   try {
-    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', '--no-playlist', url], true), 20000);
+    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', '--no-playlist', url], true), 25000);
   } catch (e) {
     console.warn('Comments timed out, fetching without comments...');
     stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', '--no-playlist', url], false), 15000);
@@ -111,39 +122,62 @@ app.get('/api/info', async (req, res) => {
   }
 });
 
-// THE FIX: Stream directly to the client using -o -
-app.get('/api/stream', async (req, res) => {
-  const { id, height } = req.query;
-  if (!id) return res.status(400).send('Missing parameters');
+// The Job Queue Endpoint
+app.post('/api/download', async (req, res) => {
+  const { id, height } = req.body;
+  if (!id || !height) return res.status(400).json({ error: 'Missing parameters' });
 
+  const jobId = crypto.randomBytes(8).toString('hex');
+  const tempFile = path.join('/tmp', `ytdl-${jobId}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
+  const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
   
-  // Use a generic format that streams well
-  const formatStr = `bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
-  const args = buildYtDlpArgs(['-f', formatStr, '-o', '-', url], false);
+  jobs.set(jobId, { status: 'downloading', progress: 0, file: tempFile, createdAt: Date.now() });
 
-  res.setHeader('Content-Type', 'video/mp4');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-
+  const args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url], false);
   const child = spawn('yt-dlp', args);
-  
-  // Pipe the stream directly to the response
-  child.stdout.pipe(res);
 
   child.stderr.on('data', (data) => {
     const text = data.toString();
-    if (text.includes('ERROR')) {
-      console.error(`[Stream Error] ${text.trim()}`);
+    const match = /\[download\]\s+([\d.]+)%/.exec(text);
+    if (match) {
+      const job = jobs.get(jobId);
+      if (job) job.progress = parseFloat(match[1]) / 100;
     }
   });
 
-  child.on('error', (err) => {
-    if (!res.headersSent) res.status(500).end('Download failed');
+  child.on('close', (code) => {
+    const job = jobs.get(jobId);
+    if (!job) return;
+    if (code === 0 && fs.existsSync(tempFile)) {
+      job.status = 'done';
+      job.progress = 1;
+    } else {
+      job.status = 'error';
+      job.error = 'Download failed';
+    }
   });
 
-  // Kill yt-dlp if the user cancels
-  req.on('close', () => {
-    child.kill('SIGKILL');
+  res.json({ jobId });
+});
+
+app.get('/api/status/:jobId', (req, res) => {
+  const job = jobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  res.json({ status: job.status, progress: job.progress, error: job.error });
+});
+
+app.get('/api/file/:jobId', (req, res) => {
+  const job = jobs.get(req.params.jobId);
+  if (!job || job.status !== 'done' || !fs.existsSync(job.file)) {
+    return res.status(404).send('File not ready');
+  }
+  res.setHeader('Content-Type', 'video/mp4');
+  const stream = fs.createReadStream(job.file);
+  stream.pipe(res);
+  stream.on('end', () => {
+    fs.unlink(job.file, () => {});
+    jobs.delete(req.params.jobId);
   });
 });
 
