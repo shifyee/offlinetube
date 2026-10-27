@@ -13,8 +13,8 @@ function downloadGams() {
       const zipPath = path.resolve(__dirname, 'gams.zip');
       const targetDir = path.resolve(__dirname, 'public/gams');
 
-      if (fs.existsSync(targetDir) && fs.readdirSync(targetDir).length > 0) {
-        console.log('Gams folder already exists, skipping download.');
+      if (fs.existsSync(path.join(targetDir, 'index.html'))) {
+        console.log('Games already extracted correctly.');
         return;
       }
 
@@ -30,7 +30,7 @@ function downloadGams() {
         fs.mkdirSync(targetDir, { recursive: true });
         execSync(`unzip -o "${zipPath}" -d "${targetDir}"`);
         
-        // Flatten the folder: if it extracted to /gams/Gams-main/, move contents to /gams/
+        // Flatten the folder if it extracted to Gams-main
         const files = fs.readdirSync(targetDir);
         if (files.length === 1 && fs.statSync(path.join(targetDir, files[0])).isDirectory()) {
           const subfolder = path.join(targetDir, files[0]);
@@ -77,7 +77,7 @@ export default defineConfig({
         ],
         maximumFileSizeToCacheInBytes: 100 * 1024 * 1024, 
         navigateFallback: '/index.html',
-        // DENY fallback for gams so it doesn't load index.html inside the iframe
+        // CRITICAL FIX: Deny fallback for /gams/ so the Service Worker doesn't loop
         navigateFallbackDenylist: [/^\/api\//, /^\/gams\//], 
         runtimeCaching: []
       }
