@@ -17,6 +17,10 @@ export const useDownloadsStore = defineStore('downloads', {
       const id = video.videoId || video.id
       if (!id || this.active[id]) return
       const controller = new AbortController()
+      
+      // Find the size from the selected stream if available
+      const expectedSize = video.formatStreams?.find(f => f.url === streamUrl)?.contentLength || 0
+
       this.active[id] = {
         id,
         title: video.title,
@@ -26,7 +30,7 @@ export const useDownloadsStore = defineStore('downloads', {
         controller
       }
       try {
-        await downloadVideo(video, streamUrl, {
+        await downloadVideo(video, streamUrl, expectedSize, {
           signal: controller.signal,
           onProgress: ({ progress }) => {
             if (this.active[id]) this.active[id].progress = progress
