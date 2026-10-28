@@ -5,6 +5,9 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+// Start the cookie refresher
+require('./cookie-refresher');
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -12,6 +15,7 @@ app.use(express.json());
 const COOKIES_FILE = '/tmp/cookies.txt';
 const jobs = new Map();
 
+// Clean up old jobs every 30 minutes
 setInterval(() => {
   const now = Date.now();
   for (const [id, job] of jobs) {
@@ -22,18 +26,8 @@ setInterval(() => {
   }
 }, 1800000);
 
-if (process.env.YOUTUBE_COOKIES) {
-  try {
-    let cookiesContent = process.env.YOUTUBE_COOKIES
-      .replace(/\\n/g, '\n')
-      .replace(/\r\n/g, '\n')
-      .split('\n')
-      .map(line => line.startsWith('#') || line.trim() === '' ? line : line.replace(/ {2,}/g, '\t'))
-      .join('\n');
-    fs.writeFileSync(COOKIES_FILE, cookiesContent);
-    console.log('Successfully loaded cookies.');
-  } catch (e) { console.error('Failed to write cookies:', e); }
-}
+// (No more manual cookie loading from process.env.YOUTUBE_COOKIES needed, 
+// the refresher writes the file automatically)
 
 function buildYtDlpArgs(args, fetchComments) {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
@@ -51,7 +45,7 @@ function buildYtDlpArgs(args, fetchComments) {
   ];
 }
 
-function runCommand(cmd, args, timeoutMs = 20000) {
+function runCommand(cmd, args, timeoutMs = 25000) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args);
     let stdout = '';
@@ -132,28 +126,19 @@ app.post('/api/download', async (req, res) => {
   
   const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
   
-  jobs.set(jobId, { status: 'downloading', progress: 0, file: tempFile, createdAt: Date.now(), stderr: '' });
-  
+  jobs.set(jobId, { status: 'downloading', progress: 0, file: tempFile, createdAt: Date.now() });
   console.log(`[Job ${jobId}] Starting download: ${id} @ ${height}p`);
 
   const args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url], false);
   const child = spawn('yt-dlp', args);
 
-  child.stdout.on('data', (data) => {
-    const text = data.toString();
-    console.log(`[Job ${jobId} stdout] ${text.trim().substring(0, 200)}`);
-  });
-
   child.stderr.on('data', (data) => {
     const text = data.toString();
-    const job = jobs.get(jobId);
-    if (job) job.stderr += text;
-    
-    // Log ALL stderr so we can see what's failing
-    console.log(`[Job ${jobId} stderr] ${text.trim().substring(0, 300)}`);
-    
     const match = /\[download\]\s+([\d.]+)%/.exec(text);
-    if (match && job) job.progress = parseFloat(match[1]) / 100;
+    if (match) {
+      const job = jobs.get(jobId);
+      if (job) job.progress = parseFloat(match[1]) / 100;
+    }
   });
 
   child.on('close', (code) => {
@@ -165,8 +150,7 @@ app.post('/api/download', async (req, res) => {
       console.log(`[Job ${jobId}] Complete! Size: ${(fs.statSync(tempFile).size / 1024 / 1024).toFixed(2)}MB`);
     } else {
       job.status = 'error';
-      job.error = `yt-dlp exited with code ${code}. See Railway logs.`;
-      console.error(`[Job ${jobId}] FAILED with code ${code}. Last stderr: ${job.stderr.substring(job.stderr.length - 500)}`);
+      job.error = `yt-dlp exited with code ${code}.`;
     }
   });
 
@@ -176,7 +160,7 @@ app.post('/api/download', async (req, res) => {
 app.get('/api/status/:jobId', (req, res) => {
   const job = jobs.get(req.params.jobId);
   if (!job) return res.status(404).json({ error: 'Job not found' });
-  res.json({ status: job.status, progress: job.progress, error: job.error, stderr: job.stderr });
+  res.json({ status: job.status, progress: job.progress, error: job.error });
 });
 
 app.get('/api/file/:jobId', (req, res) => {
