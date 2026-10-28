@@ -8,8 +8,7 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
-    "playwright": "^1.44.0",
-    "playwright-extra": "^4.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "rebrowser-playwright": "^1.44.0",
+    "rebrowser-playwright-core": "^1.44.0"
   }
 }
