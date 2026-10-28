@@ -63,7 +63,6 @@ function buildYtDlpArgs(args, fetchComments) {
   ];
 }
 
-// THE FIX: Detached spawn and process group killing
 function runCommand(cmd, args, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { detached: true });
@@ -96,9 +95,15 @@ app.get('/api/info', async (req, res) => {
     // Try with comments (15s timeout)
     stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', '--no-playlist', url], true), 15000);
   } catch (e) {
-    console.warn('Comments timed out, fetching without comments...');
-    // Try without comments (10s timeout)
-    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', '--no-playlist', url], false), 10000);
+    console.warn('Comments fetch failed, trying without comments...');
+    try {
+      // Try without comments (10s timeout)
+      stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', '--no-playlist', url], false), 10000);
+    } catch (err2) {
+      // THE FIX: Catch the error so the server DOES NOT CRASH
+      console.error('yt-dlp failed completely:', err2.message);
+      return res.status(500).json({ error: 'YouTube blocked the request. Your cookies are invalid.', details: err2.message });
+    }
   }
 
   try {
