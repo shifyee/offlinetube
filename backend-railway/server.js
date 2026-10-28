@@ -5,9 +5,6 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// Start the cookie refresher
-require('./cookie-refresher');
-
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -15,7 +12,31 @@ app.use(express.json());
 const COOKIES_FILE = '/tmp/cookies.txt';
 const jobs = new Map();
 
-// Clean up old jobs every 30 minutes
+// Ensure CORS headers are always sent, even on 500 errors
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  next();
+});
+
+if (process.env.YOUTUBE_COOKIES) {
+  try {
+    const cookiesContent = process.env.YOUTUBE_COOKIES
+      .replace(/\\n/g, '\n')
+      .replace(/\r\n/g, '\n')
+      .split('\n')
+      .map(line => line.startsWith('#') || line.trim() === '' ? line : line.replace(/ {2,}/g, '\t'))
+      .join('\n');
+    fs.writeFileSync(COOKIES_FILE, cookiesContent);
+    console.log('[Server] Wrote YOUTUBE_COOKIES from environment to /tmp/cookies.txt');
+  } catch (e) {
+    console.error('[Server] Failed to write YOUTUBE_COOKIES:', e);
+  }
+}
+
+require('./cookie-refresher');
+
 setInterval(() => {
   const now = Date.now();
   for (const [id, job] of jobs) {
@@ -26,9 +47,6 @@ setInterval(() => {
   }
 }, 1800000);
 
-// (No more manual cookie loading from process.env.YOUTUBE_COOKIES needed, 
-// the refresher writes the file automatically)
-
 function buildYtDlpArgs(args, fetchComments) {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
   let extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
@@ -36,7 +54,7 @@ function buildYtDlpArgs(args, fetchComments) {
 
   return [
     ...cookieArgs,
-    '--socket-timeout', '30',
+    '--socket-timeout', '15',
     '--no-warnings',
     '--no-check-certificates',
     '--newline',
@@ -45,13 +63,14 @@ function buildYtDlpArgs(args, fetchComments) {
   ];
 }
 
-function runCommand(cmd, args, timeoutMs = 25000) {
+// THE FIX: Detached spawn and process group killing
+function runCommand(cmd, args, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args);
+    const child = spawn(cmd, args, { detached: true });
     let stdout = '';
     let stderr = '';
     const timeout = setTimeout(() => {
-      child.kill('SIGKILL');
+      try { process.kill(-child.pid, 'SIGKILL'); } catch (e) {}
       reject(new Error('Command timed out'));
     }, timeoutMs);
 
@@ -74,10 +93,12 @@ app.get('/api/info', async (req, res) => {
   let stdout = null;
 
   try {
-    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', '--no-playlist', url], true), 25000);
+    // Try with comments (15s timeout)
+    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', '--no-playlist', url], true), 15000);
   } catch (e) {
     console.warn('Comments timed out, fetching without comments...');
-    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', '--no-playlist', url], false), 15000);
+    // Try without comments (10s timeout)
+    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', '--no-playlist', url], false), 10000);
   }
 
   try {
