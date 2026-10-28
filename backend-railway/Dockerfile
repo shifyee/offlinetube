@@ -1,6 +1,6 @@
 FROM node:20-slim
 
-# Install Python, ffmpeg, curl, unzip, git
+# Install Python, ffmpeg, curl, unzip, git, and Xvfb
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     unzip \
     git \
+    xvfb \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -26,8 +27,10 @@ RUN git clone --single-branch --branch master https://github.com/Brainicism/bgut
 WORKDIR /app
 COPY package.json ./
 
-# Install rebrowser-playwright and its Firefox browser
-RUN npm install --no-cache && npx rebrowser-playwright install-deps && npx rebrowser-playwright install firefox
+# Install rebrowser-playwright and its browser binaries
+RUN npm install --no-cache && \
+    npx rebrowser-playwright install-deps && \
+    npx rebrowser-playwright install chromium firefox
 
 COPY . .
 
@@ -36,5 +39,5 @@ ENV YTDLP=/usr/local/bin/yt-dlp
 ENV NODE_ENV=production
 EXPOSE 8080
 
-# Start the POT provider, update yt-dlp, then start the server
-CMD ["sh", "-c", "node /pot-provider/server/build/main.js & yt-dlp -U >/dev/null 2>&1 || true; node server.js"]
+# Start with xvfb-run to provide a virtual display for the browser
+CMD ["sh", "-c", "xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' sh -c 'node /pot-provider/server/build/main.js & yt-dlp -U >/dev/null 2>&1 || true; node server.js'"]
