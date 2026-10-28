@@ -1,9 +1,5 @@
-const { chromium } = require('playwright-extra');
-const stealth = require('puppeteer-extra-plugin-stealth')();
+const { chromium } = require('rebrowser-playwright');
 const fs = require('fs');
-
-// Apply the stealth plugin to make the browser look human
-chromium.use(stealth);
 
 const COOKIES_FILE = '/tmp/cookies.txt';
 const EMAIL = process.env.BURNER_EMAIL;
@@ -15,16 +11,18 @@ async function refreshCookies() {
     return false;
   }
 
-  console.log('Starting automated cookie refresh (stealth mode)...');
+  console.log('Starting automated cookie refresh (rebrowser mode)...');
   
   const browser = await chromium.launch({
     headless: true,
     args: [
       '--disable-blink-features=AutomationControlled',
+      '--disable-features=IsolateOrigins,site-per-process',
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage'
-    ]
+    ],
+    ignoreDefaultArgs: ['--enable-automation']
   });
   
   const context = await browser.newContext({
@@ -36,13 +34,10 @@ async function refreshCookies() {
 
   try {
     console.log('Navigating to Google login...');
-    // Add a random delay to mimic human behavior
-    await page.waitForTimeout(2000 + Math.random() * 2000);
-    
-    await page.goto('https://accounts.google.com/signin/v2/identifier', { waitUntil: 'networkidle', timeout: 30000 });
+    await page.goto('https://accounts.google.com/signin/v2/identifier', { waitUntil: 'networkidle', timeout: 45000 });
     
     console.log('Waiting for email input...');
-    await page.waitForSelector('input[type="email"]', { timeout: 15000 });
+    await page.waitForSelector('input[type="email"]', { timeout: 20000 });
     
     console.log('Entering email...');
     await page.fill('input[type="email"]', EMAIL);
@@ -50,22 +45,20 @@ async function refreshCookies() {
     await page.click('button:has-text("Next")');
     
     console.log('Waiting for password field...');
-    await page.waitForSelector('input[type="password"]', { timeout: 15000 });
+    await page.waitForSelector('input[type="password"]', { timeout: 20000 });
     
     console.log('Entering password...');
     await page.fill('input[type="password"]', PASSWORD);
     await page.waitForTimeout(500);
     await page.click('button:has-text("Next")');
     
-    // Wait for navigation to complete
     console.log('Waiting for login to complete...');
-    await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 20000 }).catch(() => {
+    await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }).catch(() => {
         console.log('Navigation timeout. Continuing anyway...');
     });
 
-    console.log(`Current page title after login: ${await page.title()}`);
+    console.log(`Current page title: ${await page.title()}`);
     
-    // Go to YouTube to finalize the session
     console.log('Navigating to YouTube...');
     await page.goto('https://www.youtube.com', { waitUntil: 'networkidle', timeout: 30000 });
     await page.waitForTimeout(3000);
