@@ -1,6 +1,6 @@
 FROM node:20-slim
 
-# Install Python, ffmpeg, curl, unzip, git, and Playwright dependencies
+# Install Python, ffmpeg, curl, unzip, git
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
@@ -24,12 +24,10 @@ RUN git clone --single-branch --branch master https://github.com/Brainicism/bgut
     npx tsc
 
 WORKDIR /app
-
-# Install Playwright and its system dependencies
-RUN npm install playwright && npx playwright install-deps && npx playwright install chromium
-
 COPY package.json ./
-RUN npm install
+
+# Install rebrowser-playwright and its Chromium browser
+RUN npm install && npx rebrowser-playwright install-deps && npx rebrowser-playwright install chromium
 
 COPY . .
 
