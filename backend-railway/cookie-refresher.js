@@ -12,9 +12,9 @@ async function tryBrowser(browserType, browserName) {
   let browser = null;
   try {
     const launchOptions = browserName === 'firefox'
-      ? { headless: true, args: ['--no-remote', '--disable-gpu'] }
+      ? { headless: false, args: ['--no-remote', '--disable-gpu'] }
       : {
-          headless: true,
+          headless: false,
           args: [
             '--disable-blink-features=AutomationControlled',
             '--no-sandbox',
@@ -41,9 +41,9 @@ async function tryBrowser(browserType, browserName) {
   try {
     console.log(`[Refresher] [${browserName}] Navigating to Google login...`);
     await page.goto('https://accounts.google.com/signin/v2/identifier', { waitUntil: 'networkidle', timeout: 60000 });
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(3000);
 
-    // ── EMAIL STEP ────────────────────────────────────────────────
+    // Email step
     console.log(`[Refresher] [${browserName}] Waiting for email field...`);
     const emailSelectors = ['input[name="identifier"]', 'input[type="email"]', 'input[autocomplete="username"]'];
     let emailInput = null;
@@ -63,49 +63,25 @@ async function tryBrowser(browserType, browserName) {
     await page.waitForTimeout(500);
     await page.click('button:has-text("Next")').catch(() => page.keyboard.press('Enter'));
 
-    // ── PASSWORD STEP ─────────────────────────────────────────────
-    // Google has TWO password fields:
-    //   1. name="hiddenPassword" (aria-hidden, a trap for bots)
-    //   2. name="password" (the real one)
-    // We must target the real one — the hidden one is invisible.
-    console.log(`[Refresher] [${browserName}] Waiting for VISIBLE password field...`);
-    await page.waitForTimeout(2000); // Let the page settle
+    // Password step – using getByLabel for robustness
+    console.log(`[Refresher] [${browserName}] Waiting for password field (getByLabel)...`);
+    await page.waitForTimeout(3000); // Let the page settle
 
-    const passwordSelectors = [
-      'input[name="password"][type="password"]:not([aria-hidden="true"])',
-      'input[type="password"]:not([aria-hidden="true"]):not([name="hiddenPassword"])',
-      'input[autocomplete="current-password"]'
-    ];
-
-    let passwordInput = null;
-    for (const selector of passwordSelectors) {
-      try {
-        passwordInput = await page.waitForSelector(selector, { timeout: 5000, state: 'visible' });
-        if (passwordInput) {
-          console.log(`[Refresher] [${browserName}] Found visible password with: ${selector}`);
-          break;
-        }
-      } catch (e) { /* try next */ }
-    }
-    if (!passwordInput) throw new Error('Visible password field not found');
+    const passwordInput = page.getByLabel('Enter your password');
+    await passwordInput.waitFor({ state: 'visible', timeout: 15000 });
 
     console.log(`[Refresher] [${browserName}] Entering password...`);
     await passwordInput.fill(PASSWORD);
     await page.waitForTimeout(500);
-
-    // Capture response status to detect "wrong password" vs "success"
-    console.log(`[Refresher] [${browserName}] Submitting password...`);
     await page.click('button:has-text("Next")').catch(() => page.keyboard.press('Enter'));
 
     console.log(`[Refresher] [${browserName}] Waiting for post-login navigation...`);
     await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
 
-    // Check if we're still on the sign-in page (wrong password or verification)
     const titleAfter = await page.title();
     console.log(`[Refresher] [${browserName}] Page title after login: ${titleAfter}`);
 
     if (titleAfter.toLowerCase().includes('sign in')) {
-      // We're still on a Google sign-in page — could be 2FA, "verify it's you", or wrong password
       const pageText = await page.content();
       if (pageText.includes('Verify it') || pageText.includes('verify it')) {
         throw new Error('Google requested identity verification (2FA / phone check). Disable 2FA on burner or use an App Password.');
@@ -119,7 +95,6 @@ async function tryBrowser(browserType, browserName) {
       throw new Error(`Still on sign-in page. May need manual verification. Title: ${titleAfter}`);
     }
 
-    // ── YOUTUBE COOKIE EXTRACTION ─────────────────────────────────
     console.log(`[Refresher] [${browserName}] Login successful. Navigating to YouTube...`);
     await page.goto('https://www.youtube.com', { waitUntil: 'networkidle', timeout: 45000 });
     await page.waitForTimeout(3000);
@@ -171,7 +146,6 @@ async function refreshCookies() {
   console.log('[Refresher] ❌ Both browsers failed. Will retry in 6 hours.');
 }
 
-// Never crash the server
 refreshCookies().catch(err => console.error('[Refresher] Uncaught error:', err.message));
 setInterval(() => {
   refreshCookies().catch(err => console.error('[Refresher] Uncaught error:', err.message));
