@@ -1,6 +1,9 @@
-const { chromium } = require('playwright');
+const { chromium } = require('playwright-extra');
+const stealth = require('puppeteer-extra-plugin-stealth')();
 const fs = require('fs');
-const path = require('path');
+
+// Apply the stealth plugin to make the browser look human
+chromium.use(stealth);
 
 const COOKIES_FILE = '/tmp/cookies.txt';
 const EMAIL = process.env.BURNER_EMAIL;
@@ -12,40 +15,64 @@ async function refreshCookies() {
     return false;
   }
 
-  console.log('Starting automated cookie refresh...');
+  console.log('Starting automated cookie refresh (stealth mode)...');
+  
   const browser = await chromium.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage'
+    ]
   });
-  const context = await browser.newContext();
+  
+  const context = await browser.newContext({
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    viewport: { width: 1920, height: 1080 }
+  });
+  
   const page = await context.newPage();
 
   try {
-    // 1. Go to Google Login
-    await page.goto('https://accounts.google.com/signin/v2/identifier', { waitUntil: 'networkidle' });
+    console.log('Navigating to Google login...');
+    // Add a random delay to mimic human behavior
+    await page.waitForTimeout(2000 + Math.random() * 2000);
     
-    // 2. Enter Email
+    await page.goto('https://accounts.google.com/signin/v2/identifier', { waitUntil: 'networkidle', timeout: 30000 });
+    
+    console.log('Waiting for email input...');
+    await page.waitForSelector('input[type="email"]', { timeout: 15000 });
+    
+    console.log('Entering email...');
     await page.fill('input[type="email"]', EMAIL);
+    await page.waitForTimeout(500);
     await page.click('button:has-text("Next")');
-    await page.waitForTimeout(2000);
-
-    // 3. Enter Password
+    
+    console.log('Waiting for password field...');
+    await page.waitForSelector('input[type="password"]', { timeout: 15000 });
+    
+    console.log('Entering password...');
     await page.fill('input[type="password"]', PASSWORD);
+    await page.waitForTimeout(500);
     await page.click('button:has-text("Next")');
-    await page.waitForTimeout(5000);
+    
+    // Wait for navigation to complete
+    console.log('Waiting for login to complete...');
+    await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 20000 }).catch(() => {
+        console.log('Navigation timeout. Continuing anyway...');
+    });
 
-    // 4. Handle possible 2FA / Challenge page
-    // If you have 2FA enabled, this script will pause here. You may need to handle it.
-    // A common workaround is to use an App Password instead of your real password.
-
-    // 5. Go to YouTube to finalize session
-    await page.goto('https://www.youtube.com', { waitUntil: 'networkidle' });
+    console.log(`Current page title after login: ${await page.title()}`);
+    
+    // Go to YouTube to finalize the session
+    console.log('Navigating to YouTube...');
+    await page.goto('https://www.youtube.com', { waitUntil: 'networkidle', timeout: 30000 });
     await page.waitForTimeout(3000);
 
-    // 6. Extract cookies
+    console.log('Extracting cookies...');
     const cookies = await context.cookies();
     
-    // Convert to Netscape format
     let netscapeCookies = '# Netscape HTTP Cookie File\n';
     netscapeCookies += '# https://curl.haxx.se/rfc/cookie_spec.html\n';
     netscapeCookies += '# This is a generated file! Do not edit.\n\n';
@@ -59,25 +86,26 @@ async function refreshCookies() {
       netscapeCookies += `${domain}\t${includeSubdomains}\t${pathStr}\t${secure}\t${expiry}\t${cookie.name}\t${cookie.value}\n`;
     }
 
-    // 7. Save to file
     fs.writeFileSync(COOKIES_FILE, netscapeCookies);
-    console.log('Successfully refreshed and saved cookies.');
+    console.log(`Successfully refreshed and saved cookies (${cookies.length} total).`);
     return true;
 
   } catch (error) {
-    console.error('Error during cookie refresh:', error);
+    console.error('Error during cookie refresh:', error.message);
+    try {
+        console.log(`Failed at page title: ${await page.title()}`);
+    } catch (e) {}
     return false;
   } finally {
     await browser.close();
   }
 }
 
-// Run immediately on startup, then every 6 hours
 refreshCookies().then(success => {
     if (success) console.log('Initial cookie refresh successful.');
+    else console.log('Initial cookie refresh failed. Will try again in 6 hours.');
 });
 
-// Schedule refresh every 6 hours (6 * 60 * 60 * 1000 ms)
 setInterval(refreshCookies, 21600000);
 
 module.exports = { refreshCookies };
