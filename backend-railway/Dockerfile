@@ -26,8 +26,8 @@ RUN git clone --single-branch --branch master https://github.com/Brainicism/bgut
 WORKDIR /app
 COPY package.json ./
 
-# Install rebrowser-playwright and its Chromium browser
-RUN npm install --no-cache && npx rebrowser-playwright install-deps && npx rebrowser-playwright install chromium
+# Install rebrowser-playwright and its Firefox browser
+RUN npm install --no-cache && npx rebrowser-playwright install-deps && npx rebrowser-playwright install firefox
 
 COPY . .
 
