@@ -6,44 +6,9 @@ const EMAIL = process.env.BURNER_EMAIL;
 const PASSWORD = process.env.BURNER_PASSWORD;
 const DISABLED = process.env.DISABLE_COOKIE_REFRESHER === 'true';
 
-async function clickFirst(page, selectors, timeout = 4000) {
-  for (const sel of selectors) {
-    try {
-      const loc = page.locator(sel).first();
-      if (await loc.isVisible({ timeout: 1000 }).catch(() => false)) {
-        await loc.click({ timeout });
-        console.log(`[Refresher] Clicked: ${sel}`);
-        return true;
-      }
-    } catch (e) {}
-  }
-  return false;
-}
-
-async function acceptGoogleConsent(page) {
-  // Google may show multiple consent/onboarding screens. Click through them.
-  for (let i = 0; i < 5; i++) {
-    const clicked = await clickFirst(page, [
-      'button:has-text("I agree")',
-      'button:has-text("Accept all")',
-      'button:has-text("Continue")',
-      'button:has-text("Got it")',
-      'button:has-text("Next")',
-      'button:has-text("Get started")',
-      'button:has-text("Confirm")',
-      'button:has-text("I understand")',
-      'div[role="button"]:has-text("I agree")',
-      'div[role="button"]:has-text("Accept all")',
-      'div[role="button"]:has-text("Continue")',
-    ]);
-    if (!clicked) break;
-    await page.waitForTimeout(2000);
-  }
-}
-
 async function tryBrowser(browserType, browserName) {
   console.log(`[Refresher] Trying ${browserName}...`);
-
+  
   let browser = null;
   try {
     const launchOptions = browserName === 'firefox'
@@ -54,7 +19,9 @@ async function tryBrowser(browserType, browserName) {
             '--disable-blink-features=AutomationControlled',
             '--no-sandbox',
             '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage'
+            '--disable-dev-shm-usage',
+            '--single-process', // MAJOR RAM SAVER
+            '--no-zygote'       // MAJOR RAM SAVER
           ],
           ignoreDefaultArgs: ['--enable-automation']
         };
@@ -71,39 +38,22 @@ async function tryBrowser(browserType, browserName) {
       : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     viewport: { width: 1920, height: 1080 }
   });
-
   const page = await context.newPage();
 
   try {
     console.log(`[Refresher] [${browserName}] Navigating to Google login...`);
-    await page.goto('https://accounts.google.com/signin/v2/identifier', {
-      waitUntil: 'networkidle',
-      timeout: 60000
-    });
+    await page.goto('https://accounts.google.com/signin/v2/identifier', { waitUntil: 'networkidle', timeout: 60000 });
     await page.waitForTimeout(3000);
 
-    // Email
     console.log(`[Refresher] [${browserName}] Waiting for email field...`);
-    const emailSelectors = [
-      'input[name="identifier"]',
-      'input[type="email"]',
-      'input[autocomplete="username"]'
-    ];
-
+    const emailSelectors = ['input[name="identifier"]', 'input[type="email"]', 'input[autocomplete="username"]'];
     let emailInput = null;
     for (const selector of emailSelectors) {
       try {
-        emailInput = await page.waitForSelector(selector, {
-          timeout: 5000,
-          state: 'visible'
-        });
-        if (emailInput) {
-          console.log(`[Refresher] [${browserName}] Found email with: ${selector}`);
-          break;
-        }
-      } catch (e) {}
+        emailInput = await page.waitForSelector(selector, { timeout: 5000, state: 'visible' });
+        if (emailInput) break;
+      } catch (e) { /* try next */ }
     }
-
     if (!emailInput) throw new Error('Email field not found');
 
     console.log(`[Refresher] [${browserName}] Entering email...`);
@@ -111,9 +61,8 @@ async function tryBrowser(browserType, browserName) {
     await page.waitForTimeout(500);
     await page.click('button:has-text("Next")').catch(() => page.keyboard.press('Enter'));
 
-    // Password
     console.log(`[Refresher] [${browserName}] Waiting for password field...`);
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(3000); 
 
     const passwordInput = page.getByLabel('Enter your password');
     await passwordInput.waitFor({ state: 'visible', timeout: 15000 });
@@ -124,69 +73,22 @@ async function tryBrowser(browserType, browserName) {
     await page.click('button:has-text("Next")').catch(() => page.keyboard.press('Enter'));
 
     console.log(`[Refresher] [${browserName}] Waiting for post-login navigation...`);
-    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
-    await page.waitForTimeout(3000);
+    await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
 
-    console.log(`[Refresher] [${browserName}] URL after login: ${page.url()}`);
-    console.log(`[Refresher] [${browserName}] Title after login: ${await page.title()}`);
+    const titleAfter = await page.title();
+    console.log(`[Refresher] [${browserName}] Page title after login: ${titleAfter}`);
 
-    // If Google shows Welcome/consent, click through it.
-    if (page.url().includes('google.com')) {
-      await acceptGoogleConsent(page);
-      await page.waitForTimeout(3000);
-      console.log(`[Refresher] [${browserName}] URL after consent: ${page.url()}`);
-      console.log(`[Refresher] [${browserName}] Title after consent: ${await page.title()}`);
+    if (titleAfter.toLowerCase().includes('sign in')) {
+      throw new Error('Still on sign-in page. Check password or 2FA.');
     }
 
-    const titleAfterConsent = await page.title();
-    if (titleAfterConsent.toLowerCase().includes('sign in')) {
-      throw new Error('Still on sign-in page after password/consent. Check password or 2FA.');
-    }
-
-    console.log(`[Refresher] [${browserName}] Navigating to YouTube...`);
-    await page.goto('https://www.youtube.com', {
-      waitUntil: 'networkidle',
-      timeout: 45000
-    });
-
-    // Handle YouTube's own cookie/consent page if it appears.
-    await acceptGoogleConsent(page);
-
+    console.log(`[Refresher] [${browserName}] Login successful. Navigating to YouTube...`);
+    await page.goto('https://www.youtube.com', { waitUntil: 'networkidle', timeout: 45000 });
+    
     console.log(`[Refresher] [${browserName}] Waiting 10 seconds for YouTube session to load...`);
     await page.waitForTimeout(10000);
 
     const cookies = await context.cookies();
-    const cookieNames = cookies.map(c => c.name);
-
-    console.log(`[Refresher] [${browserName}] Cookie count: ${cookies.length}`);
-    console.log(`[Refresher] [${browserName}] Cookie names: ${cookieNames.join(', ')}`);
-
-    // These are the cookies yt-dlp needs for a real logged-in YouTube session.
-    const authCookieNames = [
-      'SID',
-      'HSID',
-      'SSID',
-      'APISID',
-      'SAPISID',
-      'LOGIN_INFO',
-      '__Secure-1PSID',
-      '__Secure-3PSID'
-    ];
-
-    const hasAuth = authCookieNames.some(name => cookieNames.includes(name));
-
-    if (!hasAuth) {
-      throw new Error(
-        `No YouTube auth cookies found. Got ${cookies.length} cookies: ${cookieNames.join(', ')}`
-      );
-    }
-
-    if (cookies.length < 20) {
-      console.warn(
-        `[Refresher] [${browserName}] ⚠️ Only ${cookies.length} cookies. Auth cookie exists, but session may be partial.`
-      );
-    }
-
     let netscapeCookies = '# Netscape HTTP Cookie File\n';
     netscapeCookies += '# https://curl.haxx.se/rfc/cookie_spec.html\n';
     netscapeCookies += '# This is a generated file! Do not edit.\n\n';
@@ -204,10 +106,6 @@ async function tryBrowser(browserType, browserName) {
 
   } catch (err) {
     console.error(`[Refresher] [${browserName}] ❌ Failed: ${err.message}`);
-    try {
-      console.log(`[Refresher] [${browserName}] Failure URL: ${page.url()}`);
-      console.log(`[Refresher] [${browserName}] Failure title: ${await page.title()}`);
-    } catch (e) {}
     return false;
   } finally {
     try { await browser.close(); } catch (e) {}
@@ -215,11 +113,7 @@ async function tryBrowser(browserType, browserName) {
 }
 
 async function refreshCookies() {
-  if (DISABLED) {
-    console.log('[Refresher] Disabled via DISABLE_COOKIE_REFRESHER=true');
-    return;
-  }
-
+  if (DISABLED) return;
   if (!EMAIL || !PASSWORD) {
     console.log('[Refresher] Skipped — BURNER_EMAIL or BURNER_PASSWORD not set.');
     return;
@@ -237,7 +131,12 @@ async function refreshCookies() {
   console.log('[Refresher] ❌ Both browsers failed. Will retry in 6 hours.');
 }
 
-refreshCookies().catch(err => console.error('[Refresher] Uncaught error:', err.message));
+// DELAY THE START: Wait 60 seconds after server boots before launching the browser.
+// This ensures the server is stable and yt-dlp is ready before RAM spikes.
+setTimeout(() => {
+  refreshCookies().catch(err => console.error('[Refresher] Uncaught error:', err.message));
+}, 60000);
+
 setInterval(() => {
   refreshCookies().catch(err => console.error('[Refresher] Uncaught error:', err.message));
 }, 6 * 60 * 60 * 1000);
