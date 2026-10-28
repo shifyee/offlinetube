@@ -43,17 +43,13 @@ async function tryBrowser(browserType, browserName) {
     await page.goto('https://accounts.google.com/signin/v2/identifier', { waitUntil: 'networkidle', timeout: 60000 });
     await page.waitForTimeout(3000);
 
-    // Email step
     console.log(`[Refresher] [${browserName}] Waiting for email field...`);
     const emailSelectors = ['input[name="identifier"]', 'input[type="email"]', 'input[autocomplete="username"]'];
     let emailInput = null;
     for (const selector of emailSelectors) {
       try {
         emailInput = await page.waitForSelector(selector, { timeout: 5000, state: 'visible' });
-        if (emailInput) {
-          console.log(`[Refresher] [${browserName}] Found email with: ${selector}`);
-          break;
-        }
+        if (emailInput) break;
       } catch (e) { /* try next */ }
     }
     if (!emailInput) throw new Error('Email field not found');
@@ -63,9 +59,8 @@ async function tryBrowser(browserType, browserName) {
     await page.waitForTimeout(500);
     await page.click('button:has-text("Next")').catch(() => page.keyboard.press('Enter'));
 
-    // Password step – using getByLabel for robustness
-    console.log(`[Refresher] [${browserName}] Waiting for password field (getByLabel)...`);
-    await page.waitForTimeout(3000); // Let the page settle
+    console.log(`[Refresher] [${browserName}] Waiting for password field...`);
+    await page.waitForTimeout(3000); 
 
     const passwordInput = page.getByLabel('Enter your password');
     await passwordInput.waitFor({ state: 'visible', timeout: 15000 });
@@ -82,22 +77,15 @@ async function tryBrowser(browserType, browserName) {
     console.log(`[Refresher] [${browserName}] Page title after login: ${titleAfter}`);
 
     if (titleAfter.toLowerCase().includes('sign in')) {
-      const pageText = await page.content();
-      if (pageText.includes('Verify it') || pageText.includes('verify it')) {
-        throw new Error('Google requested identity verification (2FA / phone check). Disable 2FA on burner or use an App Password.');
-      }
-      if (pageText.includes('Wrong password') || pageText.includes("couldn't find")) {
-        throw new Error('Google rejected the password. Check BURNER_PASSWORD.');
-      }
-      if (pageText.includes('unusual activity')) {
-        throw new Error('Google flagged unusual activity from this IP. This burner account may be blocked from Railway.');
-      }
-      throw new Error(`Still on sign-in page. May need manual verification. Title: ${titleAfter}`);
+      throw new Error('Still on sign-in page. Check password or 2FA.');
     }
 
     console.log(`[Refresher] [${browserName}] Login successful. Navigating to YouTube...`);
     await page.goto('https://www.youtube.com', { waitUntil: 'networkidle', timeout: 45000 });
-    await page.waitForTimeout(3000);
+    
+    // THE FIX: Wait 10 seconds for full cookie session to load
+    console.log(`[Refresher] [${browserName}] Waiting 10 seconds for YouTube session to load...`);
+    await page.waitForTimeout(10000);
 
     const cookies = await context.cookies();
     let netscapeCookies = '# Netscape HTTP Cookie File\n';
@@ -117,7 +105,6 @@ async function tryBrowser(browserType, browserName) {
 
   } catch (err) {
     console.error(`[Refresher] [${browserName}] ❌ Failed: ${err.message}`);
-    try { console.log(`[Refresher] [${browserName}] Page title: ${await page.title()}`); } catch (e) {}
     return false;
   } finally {
     try { await browser.close(); } catch (e) {}
@@ -125,10 +112,7 @@ async function tryBrowser(browserType, browserName) {
 }
 
 async function refreshCookies() {
-  if (DISABLED) {
-    console.log('[Refresher] Disabled via DISABLE_COOKIE_REFRESHER=true');
-    return;
-  }
+  if (DISABLED) return;
   if (!EMAIL || !PASSWORD) {
     console.log('[Refresher] Skipped — BURNER_EMAIL or BURNER_PASSWORD not set.');
     return;
