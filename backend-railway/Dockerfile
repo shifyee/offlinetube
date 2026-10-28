@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y \
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
 # Install the EJS plugin and the latest nightly yt-dlp via pip
-RUN pip3 install --break-system-packages --force-reinstall --pre "yt-dlp[default]" yt-dlp-ejs
+RUN pip3 install --break-system-packages --force-reinstall --pre "yt-dlp" yt-dlp-ejs
 
 # Clone and build the POT provider
 RUN git clone --single-branch --branch master https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /pot-provider && \
@@ -27,7 +27,7 @@ WORKDIR /app
 COPY package.json ./
 
 # Install rebrowser-playwright and its Chromium browser
-RUN npm install && npx rebrowser-playwright install-deps && npx rebrowser-playwright install chromium
+RUN npm install --no-cache && npx rebrowser-playwright install-deps && npx rebrowser-playwright install chromium
 
 COPY . .
 
