@@ -22,14 +22,39 @@ app.use((req, res, next) => {
 
 if (process.env.YOUTUBE_COOKIES) {
   try {
-    const cookiesContent = process.env.YOUTUBE_COOKIES
-      .replace(/\\n/g, '\n')
-      .replace(/\r\n/g, '\n')
-      .split('\n')
-      .map(line => line.startsWith('#') || line.trim() === '' ? line : line.replace(/ {2,}/g, '\t'))
-      .join('\n');
+    let cookiesContent = process.env.YOUTUBE_COOKIES.trim();
+
+    // 1. Check if the user pasted JSON (starts with '[')
+    if (cookiesContent.startsWith('[')) {
+      console.log('[Server] Detected JSON cookies. Converting to Netscape format...');
+      const jsonCookies = JSON.parse(cookiesContent);
+      
+      let netscape = '# Netscape HTTP Cookie File\n';
+      netscape += '# https://curl.haxx.se/rfc/cookie_spec.html\n';
+      netscape += '# This is a generated file! Do not edit.\n\n';
+
+      for (const cookie of jsonCookies) {
+        const domain = cookie.domain.startsWith('.') ? cookie.domain : `.${cookie.domain}`;
+        const includeSubdomains = 'TRUE'; // Usually TRUE for YouTube
+        const path = cookie.path || '/';
+        const secure = cookie.secure ? 'TRUE' : 'FALSE';
+        const expiry = cookie.expirationDate ? Math.floor(cookie.expirationDate) : 0;
+        
+        netscape += `${domain}\t${includeSubdomains}\t${path}\t${secure}\t${expiry}\t${cookie.name}\t${cookie.value}\n`;
+      }
+      cookiesContent = netscape;
+    } else {
+      // 2. Assume it's Netscape format, just fix any escaped newlines
+      cookiesContent = cookiesContent
+        .replace(/\\n/g, '\n')
+        .replace(/\r\n/g, '\n')
+        .split('\n')
+        .map(line => line.startsWith('#') || line.trim() === '' ? line : line.replace(/ {2,}/g, '\t'))
+        .join('\n');
+    }
+
     fs.writeFileSync(COOKIES_FILE, cookiesContent);
-    console.log('[Server] Wrote YOUTUBE_COOKIES from environment to /tmp/cookies.txt');
+    console.log('[Server] Wrote YOUTUBE_COOKIES to /tmp/cookies.txt');
   } catch (e) {
     console.error('[Server] Failed to write YOUTUBE_COOKIES:', e);
   }
