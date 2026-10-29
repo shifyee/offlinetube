@@ -1,43 +1,41 @@
-FROM node:20-slim
+FROM node:20-bookworm-slim
 
-# Install Python, ffmpeg, curl, unzip, git, and Xvfb
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    ffmpeg \
-    curl \
-    unzip \
-    git \
-    xvfb \
-    && apt-get clean \
+# System dependencies (Removed xvfb and playwright to save RAM)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg \
+      curl \
+      ca-certificates \
+      python3 \
+      git \
+      tar \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Deno (JavaScript runtime for the EJS solver)
-RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
+# Install yt-dlp from the absolute latest master branch 
+# (This bypasses the buggy "latest" release and fixes the PO Token stall)
+RUN curl -L https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz | tar xz -C /tmp \
+    && mv /tmp/yt-dlp-master/yt-dlp /usr/local/bin/yt-dlp \
+    && chmod +x /usr/local/bin/yt-dlp
 
-# Install the EJS plugin and the latest nightly yt-dlp via pip
-RUN pip3 install --break-system-packages --force-reinstall --pre "yt-dlp" yt-dlp-ejs
-
-# Clone and build the POT provider
-RUN git clone --single-branch --branch master https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /pot-provider && \
-    cd /pot-provider/server && \
-    npm install && \
-    npx tsc
+# Clone and build the POT provider (v2.0.2)
+RUN git clone --single-branch --branch 2.0.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /pot-provider \
+    && cd /pot-provider/server \
+    && npm install \
+    && npx tsc
 
 WORKDIR /app
-COPY package.json ./
 
-# Install rebrowser-playwright and its browser binaries
-RUN npm install --no-cache && \
-    npx rebrowser-playwright install-deps && \
-    npx rebrowser-playwright install chromium firefox
+# Copy package.json and install Node dependencies (express, cors)
+COPY package.json* ./
+RUN if [ -f package.json ]; then npm install --omit=dev; fi
+# Fallback in case package.json is missing express/cors
+RUN npm install express cors
 
+# Copy the rest of your app files (server.js, index.html, etc.)
 COPY . .
 
 ENV PORT=8080
-ENV YTDLP=/usr/local/bin/yt-dlp
 ENV NODE_ENV=production
 EXPOSE 8080
 
-# Start with xvfb-run to provide a virtual display for the browser
-CMD ["sh", "-c", "xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' sh -c 'node /pot-provider/server/build/main.js & yt-dlp -U >/dev/null 2>&1 || true; node server.js'"]
+# Start the POT server in the background, then run the Node server
+CMD ["sh", "-c", "node /pot-provider/server/build/main.js & node server.js"]
