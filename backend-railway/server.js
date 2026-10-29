@@ -20,18 +20,16 @@ app.use((req, res, next) => {
   next();
 });
 
-// --- COOKIE HANDLING ---
+// --- COOKIE HANDLING (From previous fix) ---
 if (process.env.YOUTUBE_COOKIES) {
   try {
     let cookiesContent = process.env.YOUTUBE_COOKIES.trim();
-
     if (cookiesContent.startsWith('[')) {
       console.log('[Server] Detected JSON cookies. Converting to Netscape format...');
       const jsonCookies = JSON.parse(cookiesContent);
       let netscape = '# Netscape HTTP Cookie File\n';
       netscape += '# https://curl.haxx.se/rfc/cookie_spec.html\n';
       netscape += '# This is a generated file! Do not edit.\n\n';
-      
       for (const cookie of jsonCookies) {
         const domain = cookie.domain.startsWith('.') ? cookie.domain : `.${cookie.domain}`;
         const secure = cookie.secure ? 'TRUE' : 'FALSE';
@@ -45,9 +43,8 @@ if (process.env.YOUTUBE_COOKIES) {
         cookiesContent = '# Netscape HTTP Cookie File\n' + cookiesContent;
       }
     }
-
     fs.writeFileSync(COOKIES_FILE, cookiesContent);
-    console.log('[Server] ✅ Successfully wrote YOUTUBE_COOKIES to /tmp/cookies.txt. Length:', cookiesContent.length);
+    console.log('[Server] ✅ Successfully wrote YOUTUBE_COOKIES to /tmp/cookies.txt');
   } catch (e) {
     console.error('[Server] Failed to write YOUTUBE_COOKIES:', e);
   }
@@ -66,30 +63,29 @@ setInterval(() => {
   }
 }, 1800000);
 
-// --- YT-DLP ARGS (Fixed PO Token flow and retries) ---
+// --- YT-DLP ARGS (Stripped down to match your old working script) ---
 function buildYtDlpArgs(args, fetchComments) {
-  const cookieArgs = fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
+  const finalArgs = [];
   
-  // Force 'tv' and 'mweb' clients to ensure PO Token flow is triggered.
-  // 'web_safari' is removed because it can skip the token fetch.
+  if (fs.existsSync(COOKIES_FILE)) {
+    finalArgs.push('--cookies', COOKIES_FILE);
+  }
+
+  // Add POT provider and force tv/mweb clients (required for modern YouTube)
   let extractorArgs = 'youtube:player_client=tv,mweb;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
-  
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
-  return [
-    ...cookieArgs,
-    '--socket-timeout', '30',           // Prevent hanging on stalled connections
-    '--concurrent-fragments', '1',      // Reduce 403 rate limits on fragments
-    '--extractor-retries', '3',         // Retry on transient extraction failures
-    '--fragment-retries', '3',          // Retry on fragment download failures
-    '--http-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    '--http-header', 'Accept-Language:en-US,en;q=0.9',
+  finalArgs.push(
+    '--socket-timeout', '30',
+    '--no-playlist',
+    '--newline',
     '--no-warnings',
     '--no-check-certificates',
-    '--newline',
     '--extractor-args', extractorArgs,
     ...args
-  ];
+  );
+
+  return finalArgs;
 }
 
 // --- SAFE PROCESS RUNNER ---
@@ -123,11 +119,11 @@ app.get('/api/info', async (req, res) => {
   let stdout = null;
 
   try {
-    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', '--no-playlist', url], true), 15000);
+    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', url], true), 15000);
   } catch (e) {
     console.warn('Comments fetch failed, trying without comments...');
     try {
-      stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', '--no-playlist', url], false), 10000);
+      stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', url], false), 10000);
     } catch (err2) {
       console.error('yt-dlp failed completely:', err2.message);
       return res.status(500).json({ error: 'YouTube blocked the request.', details: err2.message });
@@ -170,7 +166,7 @@ app.get('/api/info', async (req, res) => {
   }
 });
 
-// --- DOWNLOAD ENDPOINTS (Increased stall timeout) ---
+// --- DOWNLOAD ENDPOINTS ---
 app.post('/api/download', async (req, res) => {
   const { id, height } = req.body;
   if (!id || !height) return res.status(400).json({ error: 'Missing parameters' });
@@ -179,7 +175,8 @@ app.post('/api/download', async (req, res) => {
   const tempFile = path.join('/tmp', `ytdl-${jobId}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
-  const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
+  // Using the EXACT format string from your old 'rip' project
+  const formatStr = `bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b`;
   
   jobs.set(jobId, { status: 'downloading', progress: 0, file: tempFile, createdAt: Date.now() });
   console.log(`[Job ${jobId}] Starting download: ${id} @ ${height}p`);
@@ -187,7 +184,6 @@ app.post('/api/download', async (req, res) => {
   const args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url], false);
   const child = spawn('yt-dlp', args);
 
-  // STALL DETECTION: Increased to 90s to allow PO Token generation and fragment retries
   let lastProgressTime = Date.now();
   const stallChecker = setInterval(() => {
     if (Date.now() - lastProgressTime > 90000) {
@@ -244,23 +240,6 @@ app.get('/api/file/:jobId', (req, res) => {
     fs.unlink(job.file, () => {});
     jobs.delete(req.params.jobId);
   });
-});
-
-// --- COOKIE SYNC ENDPOINT ---
-app.post('/api/update-cookies', express.text({ type: 'text/plain' }), (req, res) => {
-  try {
-    if (!req.body) return res.status(400).send('No cookies provided');
-    let cookiesContent = req.body.trim().replace(/\r\n/g, '\n');
-    if (!cookiesContent.includes('# Netscape HTTP Cookie File') && !cookiesContent.includes('# HTTP Cookie File')) {
-      cookiesContent = '# Netscape HTTP Cookie File\n' + cookiesContent;
-    }
-    fs.writeFileSync(COOKIES_FILE, cookiesContent);
-    console.log('[Server] ✅ Cookies updated via API!');
-    res.status(200).send('Cookies updated successfully');
-  } catch (err) {
-    console.error('[Server] Failed to update cookies:', err);
-    res.status(500).send('Failed to update cookies');
-  }
 });
 
 const PORT = process.env.PORT || 8080;
