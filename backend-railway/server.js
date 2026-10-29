@@ -25,7 +25,6 @@ if (process.env.YOUTUBE_COOKIES) {
   try {
     let cookiesContent = process.env.YOUTUBE_COOKIES.trim();
     if (cookiesContent.startsWith('[')) {
-      console.log('[Server] Detected JSON cookies. Converting to Netscape format...');
       const jsonCookies = JSON.parse(cookiesContent);
       let netscape = '# Netscape HTTP Cookie File\n# https://curl.haxx.se/rfc/cookie_spec.html\n# This is a generated file! Do not edit.\n\n';
       for (const cookie of jsonCookies) {
@@ -59,12 +58,11 @@ setInterval(() => {
   }
 }, 1800000);
 
-// --- YT-DLP ARGS (Merging 'rip' reliability with OfflineTube needs) ---
+// --- YT-DLP ARGS ---
 function buildYtDlpArgs(args, fetchComments) {
   const finalArgs = [];
   if (fs.existsSync(COOKIES_FILE)) finalArgs.push('--cookies', COOKIES_FILE);
 
-  // Keep POT provider, but let yt-dlp handle the format picking natively
   let extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
@@ -79,7 +77,6 @@ function buildYtDlpArgs(args, fetchComments) {
   return finalArgs;
 }
 
-// --- SAFE PROCESS RUNNER ---
 function runCommand(cmd, args, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { detached: true });
@@ -111,11 +108,9 @@ app.get('/api/info', async (req, res) => {
   try {
     stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', url], true), 20000);
   } catch (e) {
-    console.warn('Comments fetch failed, trying without comments...');
     try {
       stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', url], false), 15000);
     } catch (err2) {
-      console.error('yt-dlp failed completely:', err2.message);
       return res.status(500).json({ error: 'YouTube blocked the request.', details: err2.message });
     }
   }
@@ -129,12 +124,14 @@ app.get('/api/info', async (req, res) => {
     const info = JSON.parse(jsonString);
     const formats = [];
     const heights = new Map();
+    
     info.formats.forEach(f => {
       if (f.height && f.vcodec !== 'none') {
         const size = f.filesize || f.filesize_approx || 0;
         if (!heights.has(f.height) || heights.get(f.height) < size) heights.set(f.height, size);
       }
     });
+    
     if (heights.size > 0) {
       Array.from(heights.entries()).sort((a, b) => b[0] - a[0]).forEach(([h, size]) => {
         formats.push({
@@ -142,6 +139,7 @@ app.get('/api/info', async (req, res) => {
         });
       });
     }
+    
     return res.json({
       videoId: id, title: info.title, author: info.uploader, authorId: '',
       authorAvatar: null, lengthSeconds: info.duration || 0, description: info.description || '',
@@ -153,21 +151,25 @@ app.get('/api/info', async (req, res) => {
   }
 });
 
-// --- DOWNLOAD ENDPOINTS ---
+// --- DOWNLOAD ENDPOINT ---
 app.post('/api/download', async (req, res) => {
   const { id, height } = req.body;
-  if (!id || !height) return res.status(400).json({ error: 'Missing parameters' });
+  if (!id) return res.status(400).json({ error: 'Missing video ID' });
 
   const jobId = crypto.randomBytes(8).toString('hex');
   const tempFile = path.join('/tmp', `ytdl-${jobId}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
-  // THE RIP PROJECT FIX: No forced [ext=mp4] on the video stream.
-  // This allows yt-dlp to grab the best stream (even if it's webm) and ffmpeg will merge it to mp4.
-  const formatStr = `bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
+  // Parse height safely to a number
+  let h = parseInt(height, 10);
+  if (isNaN(h) || h <= 0) h = 1080;
+
+  // THE FIX: Do NOT force [ext=mp4] on the video stream. 
+  // Grab best video <= h, best audio, and merge to mp4.
+  const formatStr = `bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/b`;
   
   jobs.set(jobId, { status: 'downloading', progress: 0, file: tempFile, createdAt: Date.now() });
-  console.log(`[Job ${jobId}] Starting download: ${id} @ ${height}p`);
+  console.log(`[Job ${jobId}] Starting download: ${id} @ ${h}p`);
 
   const args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url], false);
   const child = spawn('yt-dlp', args);
@@ -175,7 +177,6 @@ app.post('/api/download', async (req, res) => {
   let lastProgressTime = Date.now();
   const stallChecker = setInterval(() => {
     if (Date.now() - lastProgressTime > 120000) {
-      console.error(`[Job ${jobId}] Stalled for 120s, killing process.`);
       try { process.kill(-child.pid, 'SIGKILL'); } catch (e) { child.kill('SIGKILL'); }
       const job = jobs.get(jobId);
       if (job) { job.status = 'error'; job.error = 'Download stalled.'; }
@@ -200,7 +201,6 @@ app.post('/api/download', async (req, res) => {
     if (code === 0 && fs.existsSync(tempFile)) {
       job.status = 'done';
       job.progress = 1;
-      console.log(`[Job ${jobId}] Complete! Size: ${(fs.statSync(tempFile).size / 1024 / 1024).toFixed(2)}MB`);
     } else {
       job.status = 'error';
       job.error = `yt-dlp exited with code ${code}.`;
