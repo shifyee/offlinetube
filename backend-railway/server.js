@@ -20,7 +20,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// --- COOKIE HANDLING (From previous fix) ---
+// --- COOKIE HANDLING ---
 if (process.env.YOUTUBE_COOKIES) {
   try {
     let cookiesContent = process.env.YOUTUBE_COOKIES.trim();
@@ -44,13 +44,14 @@ if (process.env.YOUTUBE_COOKIES) {
       }
     }
     fs.writeFileSync(COOKIES_FILE, cookiesContent);
-    console.log('[Server] ✅ Successfully wrote YOUTUBE_COOKIES to /tmp/cookies.txt');
+    console.log('[Server] ✅ Successfully wrote YOUTUBE_COOKIES to /tmp/cookies.txt. Length:', cookiesContent.length);
   } catch (e) {
     console.error('[Server] Failed to write YOUTUBE_COOKIES:', e);
   }
 }
 
-require('./cookie-refresher');
+// DO NOT REQUIRE THE REFRESHER IF YOU ARE USING MANUAL COOKIES
+// require('./cookie-refresher');
 
 // --- JOB CLEANUP ---
 setInterval(() => {
@@ -63,7 +64,7 @@ setInterval(() => {
   }
 }, 1800000);
 
-// --- YT-DLP ARGS (Stripped down to match your old working script) ---
+// --- YT-DLP ARGS (Fixed client and headers) ---
 function buildYtDlpArgs(args, fetchComments) {
   const finalArgs = [];
   
@@ -71,8 +72,8 @@ function buildYtDlpArgs(args, fetchComments) {
     finalArgs.push('--cookies', COOKIES_FILE);
   }
 
-  // Add POT provider and force tv/mweb clients (required for modern YouTube)
-  let extractorArgs = 'youtube:player_client=tv,mweb;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  // Just use the POT provider baseurl. Let yt-dlp default to the 'web' client.
+  let extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
   finalArgs.push(
@@ -80,7 +81,6 @@ function buildYtDlpArgs(args, fetchComments) {
     '--no-playlist',
     '--newline',
     '--no-warnings',
-    '--no-check-certificates',
     '--extractor-args', extractorArgs,
     ...args
   );
@@ -175,8 +175,7 @@ app.post('/api/download', async (req, res) => {
   const tempFile = path.join('/tmp', `ytdl-${jobId}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
-  // Using the EXACT format string from your old 'rip' project
-  const formatStr = `bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b`;
+  const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
   
   jobs.set(jobId, { status: 'downloading', progress: 0, file: tempFile, createdAt: Date.now() });
   console.log(`[Job ${jobId}] Starting download: ${id} @ ${height}p`);
