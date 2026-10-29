@@ -59,20 +59,17 @@ setInterval(() => {
   }
 }, 1800000);
 
-// --- YT-DLP ARGS (Fixed to prevent stalling) ---
+// --- YT-DLP ARGS (Merging 'rip' reliability with OfflineTube needs) ---
 function buildYtDlpArgs(args, fetchComments) {
   const finalArgs = [];
   if (fs.existsSync(COOKIES_FILE)) finalArgs.push('--cookies', COOKIES_FILE);
 
-  // Force 'web' client + add timeouts & retries
-  let extractorArgs = 'youtube:player_client=web;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  // Keep POT provider, but let yt-dlp handle the format picking natively
+  let extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
   finalArgs.push(
-    '--socket-timeout', '120',       // Prevent infinite hang on token delay
-    '--fragment-retries', '10',      // Retry stalled video fragments
-    '--retry-sleep', 'linear=1::5',  // Backoff between retries
-    '--extractor-retries', '3',
+    '--socket-timeout', '30',
     '--no-playlist',
     '--newline',
     '--no-warnings',
@@ -164,7 +161,10 @@ app.post('/api/download', async (req, res) => {
   const jobId = crypto.randomBytes(8).toString('hex');
   const tempFile = path.join('/tmp', `ytdl-${jobId}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
-  const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
+  
+  // THE RIP PROJECT FIX: No forced [ext=mp4] on the video stream.
+  // This allows yt-dlp to grab the best stream (even if it's webm) and ffmpeg will merge it to mp4.
+  const formatStr = `bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
   
   jobs.set(jobId, { status: 'downloading', progress: 0, file: tempFile, createdAt: Date.now() });
   console.log(`[Job ${jobId}] Starting download: ${id} @ ${height}p`);
@@ -178,7 +178,7 @@ app.post('/api/download', async (req, res) => {
       console.error(`[Job ${jobId}] Stalled for 120s, killing process.`);
       try { process.kill(-child.pid, 'SIGKILL'); } catch (e) { child.kill('SIGKILL'); }
       const job = jobs.get(jobId);
-      if (job) { job.status = 'error'; job.error = 'Download stalled. Try a different quality.'; }
+      if (job) { job.status = 'error'; job.error = 'Download stalled.'; }
       clearInterval(stallChecker);
     }
   }, 5000);
