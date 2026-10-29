@@ -12,7 +12,7 @@ app.use(express.json());
 const COOKIES_FILE = '/tmp/cookies.txt';
 const jobs = new Map();
 
-// Ensure CORS headers are always sent, even on 500 errors
+// Force CORS headers on all responses
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -20,48 +20,49 @@ app.use((req, res, next) => {
   next();
 });
 
+// --- COOKIE HANDLING ---
 if (process.env.YOUTUBE_COOKIES) {
   try {
     let cookiesContent = process.env.YOUTUBE_COOKIES.trim();
 
-    // 1. Check if the user pasted JSON (starts with '[')
+    // 1. Handle JSON format
     if (cookiesContent.startsWith('[')) {
       console.log('[Server] Detected JSON cookies. Converting to Netscape format...');
       const jsonCookies = JSON.parse(cookiesContent);
-      
       let netscape = '# Netscape HTTP Cookie File\n';
       netscape += '# https://curl.haxx.se/rfc/cookie_spec.html\n';
       netscape += '# This is a generated file! Do not edit.\n\n';
-
+      
       for (const cookie of jsonCookies) {
         const domain = cookie.domain.startsWith('.') ? cookie.domain : `.${cookie.domain}`;
-        const includeSubdomains = 'TRUE'; // Usually TRUE for YouTube
-        const path = cookie.path || '/';
         const secure = cookie.secure ? 'TRUE' : 'FALSE';
         const expiry = cookie.expirationDate ? Math.floor(cookie.expirationDate) : 0;
-        
-        netscape += `${domain}\t${includeSubdomains}\t${path}\t${secure}\t${expiry}\t${cookie.name}\t${cookie.value}\n`;
+        netscape += `${domain}\tTRUE\t${cookie.path || '/'}\t${secure}\t${expiry}\t${cookie.name}\t${cookie.value}\n`;
       }
       cookiesContent = netscape;
     } else {
-      // 2. Assume it's Netscape format, just fix any escaped newlines
-      cookiesContent = cookiesContent
-        .replace(/\\n/g, '\n')
-        .replace(/\r\n/g, '\n')
-        .split('\n')
-        .map(line => line.startsWith('#') || line.trim() === '' ? line : line.replace(/ {2,}/g, '\t'))
-        .join('\n');
+      // 2. Handle Netscape format: DO NOT mess with tabs/spaces in the values.
+      // Just fix Windows line endings and ensure the header exists.
+      cookiesContent = cookiesContent.replace(/\r\n/g, '\n');
+      
+      if (!cookiesContent.includes('# Netscape HTTP Cookie File') && !cookiesContent.includes('# HTTP Cookie File')) {
+        console.warn('[Server] Cookie header missing. Prepending standard Netscape header.');
+        cookiesContent = '# Netscape HTTP Cookie File\n' + cookiesContent;
+      }
     }
 
     fs.writeFileSync(COOKIES_FILE, cookiesContent);
-    console.log('[Server] Wrote YOUTUBE_COOKIES to /tmp/cookies.txt');
+    console.log('[Server] ✅ Successfully wrote YOUTUBE_COOKIES to /tmp/cookies.txt. Length:', cookiesContent.length);
   } catch (e) {
     console.error('[Server] Failed to write YOUTUBE_COOKIES:', e);
   }
 }
 
+// --- AUTO REFRESHER ---
+// Note: Ensure DISABLE_COOKIE_REFRESHER=true is set in Railway if you are using manual cookies.
 require('./cookie-refresher');
 
+// --- JOB CLEANUP ---
 setInterval(() => {
   const now = Date.now();
   for (const [id, job] of jobs) {
@@ -72,6 +73,7 @@ setInterval(() => {
   }
 }, 1800000);
 
+// --- YT-DLP ARGS ---
 function buildYtDlpArgs(args, fetchComments) {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
   let extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
@@ -88,6 +90,7 @@ function buildYtDlpArgs(args, fetchComments) {
   ];
 }
 
+// --- SAFE PROCESS RUNNER ---
 function runCommand(cmd, args, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { detached: true });
@@ -109,6 +112,7 @@ function runCommand(cmd, args, timeoutMs = 15000) {
   });
 }
 
+// --- API INFO (Prevents server crashes) ---
 app.get('/api/info', async (req, res) => {
   const { id } = req.query;
   if (!id) return res.status(400).json({ error: 'Missing video ID' });
@@ -125,9 +129,9 @@ app.get('/api/info', async (req, res) => {
       // Try without comments (10s timeout)
       stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', '--no-playlist', url], false), 10000);
     } catch (err2) {
-      // THE FIX: Catch the error so the server DOES NOT CRASH
       console.error('yt-dlp failed completely:', err2.message);
-      return res.status(500).json({ error: 'YouTube blocked the request. Your cookies are invalid.', details: err2.message });
+      // Return a clean 500 error so the server stays alive and the frontend gets a proper response
+      return res.status(500).json({ error: 'YouTube blocked the request.', details: err2.message });
     }
   }
 
@@ -167,6 +171,7 @@ app.get('/api/info', async (req, res) => {
   }
 });
 
+// --- DOWNLOAD ENDPOINTS ---
 app.post('/api/download', async (req, res) => {
   const { id, height } = req.body;
   if (!id || !height) return res.status(400).json({ error: 'Missing parameters' });
@@ -226,6 +231,27 @@ app.get('/api/file/:jobId', (req, res) => {
     fs.unlink(job.file, () => {});
     jobs.delete(req.params.jobId);
   });
+});
+
+// --- LOCAL EXTENSION SYNC ENDPOINT ---
+app.post('/api/update-cookies', express.text({ type: 'text/plain' }), (req, res) => {
+  try {
+    if (!req.body) return res.status(400).send('No cookies provided');
+    
+    let cookiesContent = req.body.trim();
+    cookiesContent = cookiesContent.replace(/\r\n/g, '\n');
+    
+    if (!cookiesContent.includes('# Netscape HTTP Cookie File') && !cookiesContent.includes('# HTTP Cookie File')) {
+      cookiesContent = '# Netscape HTTP Cookie File\n' + cookiesContent;
+    }
+
+    fs.writeFileSync(COOKIES_FILE, cookiesContent);
+    console.log('[Server] ✅ Cookies updated via API!');
+    res.status(200).send('Cookies updated successfully');
+  } catch (err) {
+    console.error('[Server] Failed to update cookies:', err);
+    res.status(500).send('Failed to update cookies');
+  }
 });
 
 const PORT = process.env.PORT || 8080;
