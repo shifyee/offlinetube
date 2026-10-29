@@ -25,7 +25,6 @@ if (process.env.YOUTUBE_COOKIES) {
   try {
     let cookiesContent = process.env.YOUTUBE_COOKIES.trim();
 
-    // 1. Handle JSON format
     if (cookiesContent.startsWith('[')) {
       console.log('[Server] Detected JSON cookies. Converting to Netscape format...');
       const jsonCookies = JSON.parse(cookiesContent);
@@ -41,12 +40,8 @@ if (process.env.YOUTUBE_COOKIES) {
       }
       cookiesContent = netscape;
     } else {
-      // 2. Handle Netscape format: DO NOT mess with tabs/spaces in the values.
-      // Just fix Windows line endings and ensure the header exists.
       cookiesContent = cookiesContent.replace(/\r\n/g, '\n');
-      
       if (!cookiesContent.includes('# Netscape HTTP Cookie File') && !cookiesContent.includes('# HTTP Cookie File')) {
-        console.warn('[Server] Cookie header missing. Prepending standard Netscape header.');
         cookiesContent = '# Netscape HTTP Cookie File\n' + cookiesContent;
       }
     }
@@ -58,8 +53,6 @@ if (process.env.YOUTUBE_COOKIES) {
   }
 }
 
-// --- AUTO REFRESHER ---
-// Note: Ensure DISABLE_COOKIE_REFRESHER=true is set in Railway if you are using manual cookies.
 require('./cookie-refresher');
 
 // --- JOB CLEANUP ---
@@ -73,15 +66,24 @@ setInterval(() => {
   }
 }, 1800000);
 
-// --- YT-DLP ARGS ---
+// --- YT-DLP ARGS (Fixed PO Token flow and retries) ---
 function buildYtDlpArgs(args, fetchComments) {
   const cookieArgs = fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
-  let extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  
+  // Force 'tv' and 'mweb' clients to ensure PO Token flow is triggered.
+  // 'web_safari' is removed because it can skip the token fetch.
+  let extractorArgs = 'youtube:player_client=tv,mweb;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
   return [
     ...cookieArgs,
-    '--socket-timeout', '15',
+    '--socket-timeout', '30',           // Prevent hanging on stalled connections
+    '--concurrent-fragments', '1',      // Reduce 403 rate limits on fragments
+    '--extractor-retries', '3',         // Retry on transient extraction failures
+    '--fragment-retries', '3',          // Retry on fragment download failures
+    '--http-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    '--http-header', 'Accept-Language:en-US,en;q=0.9',
     '--no-warnings',
     '--no-check-certificates',
     '--newline',
@@ -112,7 +114,7 @@ function runCommand(cmd, args, timeoutMs = 15000) {
   });
 }
 
-// --- API INFO (Prevents server crashes) ---
+// --- API INFO ---
 app.get('/api/info', async (req, res) => {
   const { id } = req.query;
   if (!id) return res.status(400).json({ error: 'Missing video ID' });
@@ -121,16 +123,13 @@ app.get('/api/info', async (req, res) => {
   let stdout = null;
 
   try {
-    // Try with comments (15s timeout)
     stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', '--no-playlist', url], true), 15000);
   } catch (e) {
     console.warn('Comments fetch failed, trying without comments...');
     try {
-      // Try without comments (10s timeout)
       stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', '--no-playlist', url], false), 10000);
     } catch (err2) {
       console.error('yt-dlp failed completely:', err2.message);
-      // Return a clean 500 error so the server stays alive and the frontend gets a proper response
       return res.status(500).json({ error: 'YouTube blocked the request.', details: err2.message });
     }
   }
@@ -171,7 +170,7 @@ app.get('/api/info', async (req, res) => {
   }
 });
 
-// --- DOWNLOAD ENDPOINTS ---
+// --- DOWNLOAD ENDPOINTS (Increased stall timeout) ---
 app.post('/api/download', async (req, res) => {
   const { id, height } = req.body;
   if (!id || !height) return res.status(400).json({ error: 'Missing parameters' });
@@ -188,16 +187,30 @@ app.post('/api/download', async (req, res) => {
   const args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url], false);
   const child = spawn('yt-dlp', args);
 
+  // STALL DETECTION: Increased to 90s to allow PO Token generation and fragment retries
+  let lastProgressTime = Date.now();
+  const stallChecker = setInterval(() => {
+    if (Date.now() - lastProgressTime > 90000) {
+      console.error(`[Job ${jobId}] Stalled for 90s, killing process.`);
+      try { process.kill(-child.pid, 'SIGKILL'); } catch (e) { child.kill('SIGKILL'); }
+      const job = jobs.get(jobId);
+      if (job) { job.status = 'error'; job.error = 'Download stalled. Try a different quality.'; }
+      clearInterval(stallChecker);
+    }
+  }, 5000);
+
   child.stderr.on('data', (data) => {
     const text = data.toString();
     const match = /\[download\]\s+([\d.]+)%/.exec(text);
     if (match) {
+      lastProgressTime = Date.now();
       const job = jobs.get(jobId);
       if (job) job.progress = parseFloat(match[1]) / 100;
     }
   });
 
   child.on('close', (code) => {
+    clearInterval(stallChecker);
     const job = jobs.get(jobId);
     if (!job) return;
     if (code === 0 && fs.existsSync(tempFile)) {
@@ -233,18 +246,14 @@ app.get('/api/file/:jobId', (req, res) => {
   });
 });
 
-// --- LOCAL EXTENSION SYNC ENDPOINT ---
+// --- COOKIE SYNC ENDPOINT ---
 app.post('/api/update-cookies', express.text({ type: 'text/plain' }), (req, res) => {
   try {
     if (!req.body) return res.status(400).send('No cookies provided');
-    
-    let cookiesContent = req.body.trim();
-    cookiesContent = cookiesContent.replace(/\r\n/g, '\n');
-    
+    let cookiesContent = req.body.trim().replace(/\r\n/g, '\n');
     if (!cookiesContent.includes('# Netscape HTTP Cookie File') && !cookiesContent.includes('# HTTP Cookie File')) {
       cookiesContent = '# Netscape HTTP Cookie File\n' + cookiesContent;
     }
-
     fs.writeFileSync(COOKIES_FILE, cookiesContent);
     console.log('[Server] ✅ Cookies updated via API!');
     res.status(200).send('Cookies updated successfully');
