@@ -7,13 +7,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       python3 \
       git \
-      tar \
     && rm -rf /var/lib/apt/lists/*
 
-# Install yt-dlp from the absolute latest master branch 
-# (This bypasses the buggy "latest" release and fixes the PO Token stall)
-RUN curl -L https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz | tar xz -C /tmp \
-    && mv /tmp/yt-dlp-master/yt-dlp /usr/local/bin/yt-dlp \
+# Install yt-dlp NIGHTLY binary (This is the standalone executable with latest fixes)
+RUN curl -L https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp \
+      -o /usr/local/bin/yt-dlp \
     && chmod +x /usr/local/bin/yt-dlp
 
 # Clone and build the POT provider (v2.0.2)
