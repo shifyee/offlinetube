@@ -23,3 +23,13 @@ export async function deleteVideo(id) {
     await db.videos.delete(id)
   })
 }
+// Register the Service Worker for offline thumbnails
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').then((registration) => {
+      console.log('Thumbnail Cache ServiceWorker registered');
+    }).catch((err) => {
+      console.log('ServiceWorker registration failed: ', err);
+    });
+  });
+}
