@@ -12,7 +12,7 @@ app.use(express.json());
 const COOKIES_FILE = '/tmp/cookies.txt';
 const jobs = new Map();
 
-// Force CORS headers on all responses
+// Force CORS headers
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -27,9 +27,7 @@ if (process.env.YOUTUBE_COOKIES) {
     if (cookiesContent.startsWith('[')) {
       console.log('[Server] Detected JSON cookies. Converting to Netscape format...');
       const jsonCookies = JSON.parse(cookiesContent);
-      let netscape = '# Netscape HTTP Cookie File\n';
-      netscape += '# https://curl.haxx.se/rfc/cookie_spec.html\n';
-      netscape += '# This is a generated file! Do not edit.\n\n';
+      let netscape = '# Netscape HTTP Cookie File\n# https://curl.haxx.se/rfc/cookie_spec.html\n# This is a generated file! Do not edit.\n\n';
       for (const cookie of jsonCookies) {
         const domain = cookie.domain.startsWith('.') ? cookie.domain : `.${cookie.domain}`;
         const secure = cookie.secure ? 'TRUE' : 'FALSE';
@@ -39,19 +37,16 @@ if (process.env.YOUTUBE_COOKIES) {
       cookiesContent = netscape;
     } else {
       cookiesContent = cookiesContent.replace(/\r\n/g, '\n');
-      if (!cookiesContent.includes('# Netscape HTTP Cookie File') && !cookiesContent.includes('# HTTP Cookie File')) {
+      if (!cookiesContent.includes('# Netscape HTTP Cookie File')) {
         cookiesContent = '# Netscape HTTP Cookie File\n' + cookiesContent;
       }
     }
     fs.writeFileSync(COOKIES_FILE, cookiesContent);
-    console.log('[Server] ✅ Successfully wrote YOUTUBE_COOKIES to /tmp/cookies.txt. Length:', cookiesContent.length);
+    console.log('[Server] ✅ Wrote YOUTUBE_COOKIES to /tmp/cookies.txt');
   } catch (e) {
     console.error('[Server] Failed to write YOUTUBE_COOKIES:', e);
   }
 }
-
-// DO NOT REQUIRE THE REFRESHER IF YOU ARE USING MANUAL COOKIES
-// require('./cookie-refresher');
 
 // --- JOB CLEANUP ---
 setInterval(() => {
@@ -64,27 +59,26 @@ setInterval(() => {
   }
 }, 1800000);
 
-// --- YT-DLP ARGS (Fixed client and headers) ---
+// --- YT-DLP ARGS (Fixed to prevent stalling) ---
 function buildYtDlpArgs(args, fetchComments) {
   const finalArgs = [];
-  
-  if (fs.existsSync(COOKIES_FILE)) {
-    finalArgs.push('--cookies', COOKIES_FILE);
-  }
+  if (fs.existsSync(COOKIES_FILE)) finalArgs.push('--cookies', COOKIES_FILE);
 
-  // Just use the POT provider baseurl. Let yt-dlp default to the 'web' client.
-  let extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  // Force 'web' client + add timeouts & retries
+  let extractorArgs = 'youtube:player_client=web;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
   finalArgs.push(
-    '--socket-timeout', '30',
+    '--socket-timeout', '120',       // Prevent infinite hang on token delay
+    '--fragment-retries', '10',      // Retry stalled video fragments
+    '--retry-sleep', 'linear=1::5',  // Backoff between retries
+    '--extractor-retries', '3',
     '--no-playlist',
     '--newline',
     '--no-warnings',
     '--extractor-args', extractorArgs,
     ...args
   );
-
   return finalArgs;
 }
 
@@ -114,16 +108,15 @@ function runCommand(cmd, args, timeoutMs = 15000) {
 app.get('/api/info', async (req, res) => {
   const { id } = req.query;
   if (!id) return res.status(400).json({ error: 'Missing video ID' });
-
   const url = `https://www.youtube.com/watch?v=${id}`;
   let stdout = null;
 
   try {
-    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', url], true), 15000);
+    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', url], true), 20000);
   } catch (e) {
     console.warn('Comments fetch failed, trying without comments...');
     try {
-      stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', url], false), 10000);
+      stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', url], false), 15000);
     } catch (err2) {
       console.error('yt-dlp failed completely:', err2.message);
       return res.status(500).json({ error: 'YouTube blocked the request.', details: err2.message });
@@ -139,14 +132,12 @@ app.get('/api/info', async (req, res) => {
     const info = JSON.parse(jsonString);
     const formats = [];
     const heights = new Map();
-
     info.formats.forEach(f => {
       if (f.height && f.vcodec !== 'none') {
         const size = f.filesize || f.filesize_approx || 0;
         if (!heights.has(f.height) || heights.get(f.height) < size) heights.set(f.height, size);
       }
     });
-
     if (heights.size > 0) {
       Array.from(heights.entries()).sort((a, b) => b[0] - a[0]).forEach(([h, size]) => {
         formats.push({
@@ -154,7 +145,6 @@ app.get('/api/info', async (req, res) => {
         });
       });
     }
-
     return res.json({
       videoId: id, title: info.title, author: info.uploader, authorId: '',
       authorAvatar: null, lengthSeconds: info.duration || 0, description: info.description || '',
@@ -174,7 +164,6 @@ app.post('/api/download', async (req, res) => {
   const jobId = crypto.randomBytes(8).toString('hex');
   const tempFile = path.join('/tmp', `ytdl-${jobId}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
-  
   const formatStr = `bv*[height<=${height}][ext=mp4]+ba[ext=m4a]/b[height<=${height}][ext=mp4]/bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`;
   
   jobs.set(jobId, { status: 'downloading', progress: 0, file: tempFile, createdAt: Date.now() });
@@ -185,8 +174,8 @@ app.post('/api/download', async (req, res) => {
 
   let lastProgressTime = Date.now();
   const stallChecker = setInterval(() => {
-    if (Date.now() - lastProgressTime > 90000) {
-      console.error(`[Job ${jobId}] Stalled for 90s, killing process.`);
+    if (Date.now() - lastProgressTime > 120000) {
+      console.error(`[Job ${jobId}] Stalled for 120s, killing process.`);
       try { process.kill(-child.pid, 'SIGKILL'); } catch (e) { child.kill('SIGKILL'); }
       const job = jobs.get(jobId);
       if (job) { job.status = 'error'; job.error = 'Download stalled. Try a different quality.'; }
@@ -217,7 +206,6 @@ app.post('/api/download', async (req, res) => {
       job.error = `yt-dlp exited with code ${code}.`;
     }
   });
-
   res.json({ jobId });
 });
 
