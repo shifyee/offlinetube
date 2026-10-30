@@ -1,4 +1,4 @@
-const CACHE_NAME = 'offlinetube-thumbnails-v1';
+const CACHE_NAME = 'offlinetube-thumbnails-v2';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -11,27 +11,32 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Intercept requests for YouTube thumbnails
-  if (url.hostname.includes('ytimg.com') || url.hostname.includes('img.youtube.com')) {
+  // Catch YouTube, Google User Content (avatars), and Piped proxies
+  const isThumbnail = 
+    url.hostname.includes('ytimg.com') || 
+    url.hostname.includes('img.youtube.com') ||
+    url.hostname.includes('ggpht.com') ||
+    url.pathname.includes('/proxy/') ||
+    url.pathname.includes('/thumbnails/');
+
+  if (isThumbnail) {
     event.respondWith(
       caches.open(CACHE_NAME).then((cache) => {
         return cache.match(event.request).then((cachedResponse) => {
-          // If we have it in the cache, return it instantly (works offline!)
           if (cachedResponse) {
-            return cachedResponse; 
+            return cachedResponse; // Return instantly offline
           }
           
-          // If not in cache, try to fetch it from the internet
           return fetch(event.request).then((networkResponse) => {
             if (networkResponse.ok) {
-              // Save it to the cache for next time
               cache.put(event.request, networkResponse.clone()); 
             }
             return networkResponse;
           }).catch(() => {
-            // IF OFFLINE AND NOT CACHED: Return a sleek SVG placeholder
-            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 16 9" style="background:#1a1a1a;display:flex;align-items:center;justify-content:center;"><rect width="16" height="9" fill="#1a1a1a"/><path d="M6 3l4 1.5-4 1.5V3z" fill="#555"/></svg>`;
-            return new Response(svg, { headers: { 'Content-Type': 'image/svg+xml' } });
+            // If offline and not cached, return a transparent 1x1 pixel 
+            // (The Vue @error handler will immediately replace it with the sleek SVG)
+            const transparentPixel = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+            return new Response(transparentPixel, { headers: { 'Content-Type': 'image/gif' } });
           });
         });
       })
