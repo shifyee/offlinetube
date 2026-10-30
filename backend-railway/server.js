@@ -160,31 +160,33 @@ app.post('/api/download', async (req, res) => {
   const tempFile = path.join('/tmp', `ytdl-${jobId}.mp4`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
-  // Parse height safely to a number
   let h = parseInt(height, 10);
   if (isNaN(h) || h <= 0) h = 1080;
 
-  // THE FIX: Do NOT force [ext=mp4] on the video stream. 
-  // Grab best video <= h, best audio, and merge to mp4.
   const formatStr = `bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/b`;
   
   jobs.set(jobId, { status: 'downloading', progress: 0, file: tempFile, createdAt: Date.now() });
   console.log(`[Job ${jobId}] Starting download: ${id} @ ${h}p`);
 
   const args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url], false);
-  const child = spawn('yt-dlp', args);
+  
+  // DETACHED: TRUE is required so we can kill the entire process tree on timeout
+  const child = spawn('yt-dlp', args, { detached: true });
 
   let lastProgressTime = Date.now();
   const stallChecker = setInterval(() => {
-    if (Date.now() - lastProgressTime > 120000) {
+    // 60 second timeout instead of 120
+    if (Date.now() - lastProgressTime > 60000) {
+      console.error(`[Job ${jobId}] Stalled for 60s, killing process.`);
       try { process.kill(-child.pid, 'SIGKILL'); } catch (e) { child.kill('SIGKILL'); }
       const job = jobs.get(jobId);
-      if (job) { job.status = 'error'; job.error = 'Download stalled.'; }
+      if (job) { job.status = 'error'; job.error = 'Download stalled or timed out.'; }
       clearInterval(stallChecker);
     }
   }, 5000);
 
-  child.stderr.on('data', (data) => {
+  // Listen to BOTH stdout and stderr because yt-dlp sometimes swaps them
+  const handleOutput = (data) => {
     const text = data.toString();
     const match = /\[download\]\s+([\d.]+)%/.exec(text);
     if (match) {
@@ -192,6 +194,21 @@ app.post('/api/download', async (req, res) => {
       const job = jobs.get(jobId);
       if (job) job.progress = parseFloat(match[1]) / 100;
     }
+    // Log actual yt-dlp errors immediately
+    if (text.includes('ERROR:')) {
+      console.error(`[Job ${jobId}] ${text.trim()}`);
+    }
+  };
+
+  child.stdout.on('data', handleOutput);
+  child.stderr.on('data', handleOutput);
+
+  // Catch spawn errors (e.g. if yt-dlp binary is missing)
+  child.on('error', (err) => {
+    clearInterval(stallChecker);
+    console.error(`[Job ${jobId}] Spawn error:`, err);
+    const job = jobs.get(jobId);
+    if (job) { job.status = 'error'; job.error = err.message; }
   });
 
   child.on('close', (code) => {
@@ -201,11 +218,13 @@ app.post('/api/download', async (req, res) => {
     if (code === 0 && fs.existsSync(tempFile)) {
       job.status = 'done';
       job.progress = 1;
+      console.log(`[Job ${jobId}] Complete! Size: ${(fs.statSync(tempFile).size / 1024 / 1024).toFixed(2)}MB`);
     } else {
       job.status = 'error';
       job.error = `yt-dlp exited with code ${code}.`;
     }
   });
+  
   res.json({ jobId });
 });
 
