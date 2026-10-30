@@ -6,19 +6,54 @@ function aborted(signal) {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 }
 
+// Helper function to fetch an image and convert it to a Base64 string
+async function fetchThumbnailAsBase64(url) {
+  if (!url) return null;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Failed to fetch thumbnail');
+    const blob = await response.blob();
+    
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.warn('Could not cache thumbnail to Base64, falling back to URL:', err);
+    return url; // Fallback to the URL if fetching fails
+  }
+}
+
 export async function downloadVideo(video, streamUrl, expectedSize, { onProgress, signal } = {}) {
   const plainVideo = JSON.parse(JSON.stringify(video))
   const id = plainVideo.videoId || plainVideo.id
   
   await clearChunks(id)
+
+  // 1. Fetch and cache the thumbnail as a Base64 string
+  const rawThumbUrl = plainVideo.videoThumbnails?.[0]?.url || plainVideo.thumbnail;
+  const cachedThumbnail = await fetchThumbnailAsBase64(rawThumbUrl);
+
+  // 2. Save the video metadata, storing the Base64 image in the `thumbnail` field
   await db.videos.put({
-    id, title: plainVideo.title, author: plainVideo.author, authorId: plainVideo.authorId,
-    lengthSeconds: plainVideo.lengthSeconds, thumbnail: plainVideo.videoThumbnails?.[0]?.url || null,
+    id, 
+    title: plainVideo.title, 
+    author: plainVideo.author, 
+    authorId: plainVideo.authorId,
+    lengthSeconds: plainVideo.lengthSeconds, 
+    thumbnail: cachedThumbnail, // This is now a Base64 string, not a URL
     description: plainVideo.description || '',
     comments: plainVideo.comments || [],
-    status: 'downloading', progress: 0, size: 0, addedAt: Date.now(), downloadedAt: null
+    status: 'downloading', 
+    progress: 0, 
+    size: 0, 
+    addedAt: Date.now(), 
+    downloadedAt: null
   })
 
+  // 3. Download the video data
   const res = await fetch(streamUrl, { signal })
   if (!res.ok) throw new Error(`Fetch failed: ${res.status}`)
   
@@ -39,6 +74,7 @@ export async function downloadVideo(video, streamUrl, expectedSize, { onProgress
     }
   }
 
+  // 4. Save the video in chunks
   const blob = new Blob(parts, { type: 'video/mp4' })
   let seq = 0
   for (let off = 0; off < blob.size; off += CHUNK_SIZE) {
@@ -46,6 +82,13 @@ export async function downloadVideo(video, streamUrl, expectedSize, { onProgress
     await db.chunks.add({ videoId: id, seq: seq++, blob: slice })
   }
 
-  await db.videos.update(id, { status: 'complete', progress: 1, size: blob.size, downloadedAt: Date.now() })
+  // 5. Mark as complete
+  await db.videos.update(id, { 
+    status: 'complete', 
+    progress: 1, 
+    size: blob.size, 
+    downloadedAt: Date.now() 
+  })
+  
   return { success: true, size: blob.size }
 }
