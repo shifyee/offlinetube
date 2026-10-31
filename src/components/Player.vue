@@ -217,7 +217,7 @@ const handleNext = () => {
     emit('next')
     // The parent will change the route, which destroys this component. 
     // The overlay will naturally fade out as the new video loads.
-  }, 1500)
+  }, 500)
 }
 
 // --- Keyboard Shortcuts ---
