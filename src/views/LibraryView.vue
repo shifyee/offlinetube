@@ -20,6 +20,17 @@ async function updateStorage() {
   }
 }
 
+// Fallback SVG directly in Vue if the Base64/SW somehow fails
+const handleImageError = (e) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9" style="background:#1a1a1a;width:100%;height:100%;display:block;">
+    <rect width="16" height="9" fill="#1a1a1a"/>
+    <circle cx="8" cy="4.5" r="1.5" fill="#2a2a2a"/>
+    <path d="M7.5 3.5L9.5 4.5L7.5 5.5V3.5Z" fill="#666"/>
+  </svg>`;
+  e.target.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  e.target.onerror = null; // Prevent infinite loop
+}
+
 onMounted(() => {
   library.refresh().then(updateStorage)
 })
@@ -31,7 +42,6 @@ async function remove(id) {
   }
 }
 
-// Update storage stats every 5 seconds to keep it fresh
 let interval = setInterval(updateStorage, 5000)
 onUnmounted(() => clearInterval(interval))
 </script>
@@ -77,6 +87,7 @@ onUnmounted(() => clearInterval(interval))
             <img 
               v-if="v.thumbnail" 
               :src="v.thumbnail" 
+              @error="handleImageError"
               class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" 
               alt="" 
             />
