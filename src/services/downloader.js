@@ -6,13 +6,12 @@ function aborted(signal) {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 }
 
-// Helper function to fetch an image and convert it to a Base64 string
-async function fetchThumbnailAsBase64(url) {
+// Helper to convert any image URL to Base64
+async function fetchImageAsBase64(url) {
   if (!url) return null;
   try {
-    // Added { mode: 'cors' } so the browser actually downloads the image data
     const response = await fetch(url, { mode: 'cors' });
-    if (!response.ok) throw new Error('Failed to fetch thumbnail');
+    if (!response.ok) throw new Error('Failed to fetch image');
     const blob = await response.blob();
     
     return new Promise((resolve, reject) => {
@@ -22,8 +21,8 @@ async function fetchThumbnailAsBase64(url) {
       reader.readAsDataURL(blob);
     });
   } catch (err) {
-    console.warn('Could not cache thumbnail to Base64, falling back to URL:', err);
-    return url; // Fallback to the URL if fetching fails
+    console.warn('Could not cache image to Base64, falling back to URL:', err);
+    return url; 
   }
 }
 
@@ -33,29 +32,33 @@ export async function downloadVideo(video, streamUrl, expectedSize, { onProgress
   
   await clearChunks(id)
 
-  // 1. Fetch and cache the thumbnail as a Base64 string
+  // 1. Cache BOTH Thumbnail and Avatar as Base64
   const rawThumbUrl = plainVideo.videoThumbnails?.[0]?.url || plainVideo.thumbnail;
-  const cachedThumbnail = await fetchThumbnailAsBase64(rawThumbUrl);
+  const rawAvatarUrl = plainVideo.authorAvatar; // <-- Get the PFP
+  
+  const cachedThumbnail = await fetchImageAsBase64(rawThumbUrl);
+  const cachedAvatar = await fetchImageAsBase64(rawAvatarUrl); // <-- Convert PFP
 
-  // 2. Save the video metadata, storing the Base64 image in the `thumbnail` field
+  // 2. Save the video metadata
   await db.videos.put({
     id, 
     title: plainVideo.title, 
     author: plainVideo.author, 
     authorId: plainVideo.authorId,
     lengthSeconds: plainVideo.lengthSeconds, 
-    thumbnail: cachedThumbnail, // Base64 string or fallback URL
+    thumbnail: cachedThumbnail, 
+    authorAvatar: cachedAvatar, // <-- Save the Base64 PFP
     description: plainVideo.description || '',
     comments: plainVideo.comments || [],
     status: 'downloading', 
     progress: 0, 
     size: 0, 
     addedAt: Date.now(), 
-    downloadedAt: null
-    watchProgress: 0
+    downloadedAt: null,
+    watchProgress: 0 
   })
 
-  // 3. Download the video data (UNCHANGED)
+  // 3. Download video data
   const res = await fetch(streamUrl, { signal })
   if (!res.ok) throw new Error(`Fetch failed: ${res.status}`)
   
@@ -76,7 +79,7 @@ export async function downloadVideo(video, streamUrl, expectedSize, { onProgress
     }
   }
 
-  // 4. Save the video in chunks (UNCHANGED)
+  // 4. Save video chunks
   const blob = new Blob(parts, { type: 'video/mp4' })
   let seq = 0
   for (let off = 0; off < blob.size; off += CHUNK_SIZE) {
@@ -84,7 +87,7 @@ export async function downloadVideo(video, streamUrl, expectedSize, { onProgress
     await db.chunks.add({ videoId: id, seq: seq++, blob: slice })
   }
 
-  // 5. Mark as complete (UNCHANGED)
+  // 5. Mark complete
   await db.videos.update(id, { 
     status: 'complete', 
     progress: 1, 
