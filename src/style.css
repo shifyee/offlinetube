@@ -32,7 +32,7 @@ body {
 /* Page Transitions (Fast & Snappy) */
 .fade-slide-enter-active,
 .fade-slide-leave-active {
-  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .fade-slide-enter-from {
   opacity: 0;
@@ -51,7 +51,7 @@ body {
 .scale-fade-enter-from,
 .scale-fade-leave-to {
   opacity: 0;
-  transform: scale(0.96); /* Less extreme scale for a snappier feel */
+  transform: scale(0.99); /* Less extreme scale for a snappier feel */
 }
 
 /* Toast Notifications (Slide in from right) */
