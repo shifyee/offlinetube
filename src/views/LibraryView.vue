@@ -20,8 +20,15 @@ async function updateStorage() {
   }
 }
 
-// Fallback SVG directly in Vue if the Base64/SW somehow fails
+// Fallback logic: Try hqdefault -> Then show dark SVG
 const handleImageError = (e) => {
+  // If the thumbnail fails, try swapping mqdefault for hqdefault
+  if (e.target.src.includes('mqdefault')) {
+    e.target.src = e.target.src.replace('mqdefault', 'hqdefault');
+    return;
+  }
+  
+  // If that fails too, show the dark SVG placeholder
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9" style="background:#1a1a1a;width:100%;height:100%;display:block;">
     <rect width="16" height="9" fill="#1a1a1a"/>
     <circle cx="8" cy="4.5" r="1.5" fill="#2a2a2a"/>
@@ -83,16 +90,27 @@ onUnmounted(() => clearInterval(interval))
         class="group bg-surface rounded-xl overflow-hidden border border-white/5 transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_10px_40px_rgba(255,0,51,0.15)]"
       >
         <RouterLink :to="`/watch/${v.id}`">
-          <div class="aspect-video bg-surface-2 overflow-hidden">
-            <!-- THE FIX: Added crossorigin="anonymous" -->
+          <!-- Changed to relative for the progress bar overlay -->
+          <div class="aspect-video bg-surface-2 overflow-hidden relative">
+            <!-- Removed crossorigin="anonymous" -->
             <img 
               v-if="v.thumbnail" 
               :src="v.thumbnail" 
               @error="handleImageError"
-              crossorigin="anonymous"
               class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" 
               alt="" 
             />
+            
+            <!-- Watch Progress Bar -->
+            <div 
+              v-if="v.watchProgress > 0 && v.watchProgress < v.lengthSeconds - 5" 
+              class="absolute bottom-0 left-0 right-0 h-1 bg-black/60"
+            >
+              <div 
+                class="h-full bg-red-600" 
+                :style="{ width: `${(v.watchProgress / v.lengthSeconds) * 100}%` }"
+              ></div>
+            </div>
           </div>
         </RouterLink>
         <div class="p-4">
