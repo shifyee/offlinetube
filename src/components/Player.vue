@@ -21,6 +21,7 @@ const error = ref(null)
 let player = null
 let objectUrl = null
 let progressInterval = null
+let hideControlsTimeout = null // <--- NEW: Timer to hide controls
 
 const useIframe = computed(() => props.videoId && !props.offlineVideoId)
 
@@ -34,22 +35,43 @@ const isFullscreen = ref(false)
 const isScrubbing = ref(false)
 const progressPosition = ref(0)
 const previewPosition = ref(0)
-const showControls = ref(false)
+const showControls = ref(true) // Start visible
 
 // Feedback Animation State
 const feedbackAnim = ref(null) 
-const animKey = ref(0) // Used to force Vue to restart the animation
+const animKey = ref(0)
 let animTimeout = null
 
 const triggerFeedback = (type) => {
   feedbackAnim.value = type
-  animKey.value += 1 // Forces the element to re-render, restarting the CSS animation
+  animKey.value += 1
   clearTimeout(animTimeout)
   animTimeout = setTimeout(() => { feedbackAnim.value = null }, 600)
 }
 
 // Next Video State
 const showNextOverlay = ref(false)
+
+// --- Control Visibility Logic (The Fullscreen Fix) ---
+const resetControlsTimer = () => {
+  showControls.value = true
+  clearTimeout(hideControlsTimeout)
+  
+  // If video is playing, hide controls after 3 seconds of no mouse movement
+  if (!isPaused.value) {
+    hideControlsTimeout = setTimeout(() => {
+      showControls.value = false
+    }, 3000)
+  }
+}
+
+const handleMouseLeave = () => {
+  // If the mouse leaves the video area and it's playing, hide immediately
+  if (!isPaused.value) {
+    showControls.value = false
+    clearTimeout(hideControlsTimeout)
+  }
+}
 
 // --- Shaka Setup ---
 async function setupPlayer() {
@@ -88,8 +110,8 @@ const formatTime = (time) => {
 const skip = (seconds) => { 
   if (videoEl.value) {
     videoEl.value.currentTime += seconds
-    // FIXED: If seconds is positive, it's forward. If negative, it's backward.
     triggerFeedback(seconds > 0 ? 'forward' : 'backward')
+    resetControlsTimer()
   }
 }
 
@@ -98,9 +120,12 @@ const togglePlayPause = () => {
   if (videoEl.value.paused) {
     videoEl.value.play()
     triggerFeedback('play')
+    resetControlsTimer() // Start the hide timer
   } else {
     videoEl.value.pause()
     triggerFeedback('pause')
+    clearTimeout(hideControlsTimeout) // Stop timer, keep controls open
+    showControls.value = true
   }
 }
 
@@ -108,6 +133,7 @@ const toggleMute = () => {
   if (videoEl.value) {
     videoEl.value.muted = !videoEl.value.muted
     triggerFeedback(videoEl.value.muted ? 'mute' : 'volume')
+    resetControlsTimer()
   }
 }
 
@@ -116,6 +142,7 @@ const updateVolume = (e) => {
   videoEl.value.volume = e.target.value
   videoEl.value.muted = e.target.value === 0
   triggerFeedback('volume')
+  resetControlsTimer()
 }
 
 const changePlaybackSpeed = () => {
@@ -124,6 +151,7 @@ const changePlaybackSpeed = () => {
   if (newSpeed > 2) newSpeed = 0.5
   videoEl.value.playbackRate = newSpeed
   playbackSpeed.value = `${newSpeed}x`
+  resetControlsTimer()
 }
 
 const toggleFullScreen = () => {
@@ -157,9 +185,11 @@ const toggleScrubbing = (e) => {
   isScrubbing.value = (e.buttons & 1) === 1
   if (isScrubbing.value) {
     videoEl.value.pause()
+    clearTimeout(hideControlsTimeout)
   } else {
     videoEl.value.currentTime = percent * videoEl.value.duration
     if (!isPaused.value) videoEl.value.play()
+    resetControlsTimer()
   }
   handleTimelineUpdate(e)
 }
@@ -210,14 +240,11 @@ const onVolumeChange = () => {
 const handleNext = () => {
   if (!props.nextVideoId) return
   videoEl.value?.pause()
-  showNextOverlay.value = true // Shows the black fade overlay
+  showNextOverlay.value = true 
   
-  // After 1.5 seconds, emit the next event
   setTimeout(() => {
     emit('next')
-    // The parent will change the route, which destroys this component. 
-    // The overlay will naturally fade out as the new video loads.
-  }, 500)
+  }, 500) // 0.5s smooth transition
 }
 
 // --- Keyboard Shortcuts ---
@@ -235,6 +262,7 @@ const handleKeydown = (e) => {
     case "arrowleft": case "j": skip(-5); break
     case "arrowright": case "l": skip(5); break
   }
+  resetControlsTimer()
 }
 
 onMounted(() => {
@@ -242,7 +270,13 @@ onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
   document.addEventListener('mouseup', (e) => { if (isScrubbing.value) toggleScrubbing(e) })
   document.addEventListener('mousemove', (e) => { if (isScrubbing.value) handleTimelineUpdate(e) })
-  document.addEventListener('fullscreenchange', () => { isFullscreen.value = !!document.fullscreenElement })
+  document.addEventListener('fullscreenchange', () => { 
+    isFullscreen.value = !!document.fullscreenElement 
+    resetControlsTimer() // Reset timer when entering/exiting fullscreen
+  })
+  
+  // Start the initial timer
+  resetControlsTimer()
 })
 
 onBeforeUnmount(() => {
@@ -251,6 +285,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeydown)
   clearInterval(progressInterval)
   clearTimeout(animTimeout)
+  clearTimeout(hideControlsTimeout)
   saveProgress()
 })
 </script>
@@ -261,15 +296,15 @@ onBeforeUnmount(() => {
     class="video-container group" 
     :class="{ paused: isPaused, 'full-screen': isFullscreen }"
     :data-volume-level="volumeLevel"
-    @mouseenter="showControls = true"
-    @mouseleave="showControls = false"
-    @mousemove="showControls = true"
+    @mousemove="resetControlsTimer"
+    @mouseleave="handleMouseLeave"
+    @click="resetControlsTimer"
   >
     <!-- Back Button Overlay (Top Left) -->
     <button 
       @click="goBack" 
-      class="back-btn absolute top-4 left-4 z-50 bg-black/50 hover:bg-black/80 text-white rounded-full p-2 backdrop-blur-sm transition-all"
-      :class="showControls ? 'opacity-100' : 'opacity-0'"
+      class="back-btn absolute top-4 left-4 z-50 bg-black/50 hover:bg-black/80 text-white rounded-full p-2 backdrop-blur-sm transition-all duration-300"
+      :class="showControls || isPaused ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-4 pointer-events-none'"
     >
       <svg viewBox="0 0 24 24" class="w-6 h-6 fill-current"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
     </button>
@@ -291,24 +326,18 @@ onBeforeUnmount(() => {
         @timeupdate="onTimeUpdate"
         @loadedmetadata="onLoadedMetadata"
         @volumechange="onVolumeChange"
-        @play="isPaused = false"
-        @pause="isPaused = true; saveProgress()" 
+        @play="isPaused = false; resetControlsTimer()"
+        @pause="isPaused = true; clearTimeout(hideControlsTimeout); showControls = true; saveProgress()" 
       ></video>
 
-      <!-- CENTER ANIMATIONS (Play/Pause/Volume/Skip) -->
+      <!-- CENTER ANIMATIONS -->
       <transition name="yt-fade">
-        <!-- The :key="animKey" is the magic fix. It destroys and recreates the DOM element, ensuring the CSS animation restarts instantly. -->
         <div v-if="feedbackAnim" :key="animKey" class="center-anim-overlay">
           <div class="anim-icon-bg">
-            <!-- Play -->
             <svg v-if="feedbackAnim === 'play'" viewBox="0 0 24 24" class="w-12 h-12 fill-white"><path d="M8,5.14V19.14L19,12.14L8,5.14Z" /></svg>
-            <!-- Pause -->
             <svg v-else-if="feedbackAnim === 'pause'" viewBox="0 0 24 24" class="w-12 h-12 fill-white"><path d="M14,19H18V5H14M6,19H10V5H6V19Z" /></svg>
-            <!-- Forward (Standard Fast Forward Icon) -->
             <svg v-else-if="feedbackAnim === 'forward'" viewBox="0 0 24 24" class="w-12 h-12 fill-white"><path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/></svg>
-            <!-- Backward (Standard Fast Rewind Icon) -->
             <svg v-else-if="feedbackAnim === 'backward'" viewBox="0 0 24 24" class="w-12 h-12 fill-white"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>
-            <!-- Volume / Mute -->
             <div v-else-if="feedbackAnim === 'volume' || feedbackAnim === 'mute'" class="flex flex-col items-center">
               <svg v-if="volumeLevel === 'muted'" viewBox="0 0 24 24" class="w-10 h-10 fill-white mb-1"><path fill="currentColor" d="M12,4L9.91,6.09L12,8.18M4.27,3L3,4.27L7.73,9H3V15H7L12,20V13.27L16.25,17.53C15.58,18.04 14.83,18.46 14,18.7V20.77C15.38,20.45 16.63,19.82 17.68,18.96L19.73,21L21,19.73L12,10.73M19,12C19,12.94 18.8,13.82 18.46,14.64L19.97,16.15C20.62,14.91 21,13.5 21,12C21,7.72 18,4.14 14,3.23V5.29C16.89,6.15 19,8.83 19,12M16.5,12C16.5,10.23 15.5,8.71 14,7.97V10.18L16.45,12.63C16.5,12.43 16.5,12.21 16.5,12Z" /></svg>
               <svg v-else viewBox="0 0 24 24" class="w-10 h-10 fill-white mb-1"><path fill="currentColor" d="M14,3.23V5.29C16.89,6.15 19,8.83 19,12C19,15.17 16.89,17.84 14,18.7V20.77C18,19.86 21,16.28 21,12C21,7.72 18,4.14 14,3.23M16.5,12C16.5,10.23 15.5,8.71 14,7.97V16C15.5,15.29 16.5,13.76 16.5,12M3,9V15H7L12,20V4L7,9H3Z" /></svg>
@@ -326,7 +355,10 @@ onBeforeUnmount(() => {
       </transition>
 
       <!-- Controls Overlay -->
-      <div class="video-controls-container" :class="{ 'opacity-100': showControls || isPaused }">
+      <div 
+        class="video-controls-container transition-opacity duration-300" 
+        :class="showControls || isPaused ? 'opacity-100' : 'opacity-0 pointer-events-none'"
+      >
         <div class="timeline-container" 
              ref="timelineContainerEl"
              @mousemove="handleTimelineUpdate"
@@ -405,9 +437,11 @@ onBeforeUnmount(() => {
 .video-container { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; margin-inline: auto; background-color: black; }
 .video-container.full-screen { max-height: 100vh; }
 video { width: 100%; height: 100%; object-fit: contain; }
-.video-controls-container { position: absolute; bottom: 0; left: 0; right: 0; color: white; z-index: 100; opacity: 0; transition: opacity 150ms ease-in-out; }
+.video-controls-container { position: absolute; bottom: 0; left: 0; right: 0; color: white; z-index: 100; }
 .video-controls-container::before { content: ""; position: absolute; bottom: 0; background: linear-gradient(to top, rgba(0, 0, 0, .75), transparent); width: 100%; aspect-ratio: 6 / 1; z-index: -1; pointer-events: none; }
-.video-container:hover .video-controls-container, .video-container:focus-within .video-controls-container, .video-container.paused .video-controls-container { opacity: 1; }
+
+/* REMOVED: .video-container:hover .video-controls-container (Vue handles this now) */
+
 .video-controls-container .controls { display: flex; gap: .5rem; padding: .25rem .5rem; align-items: center; }
 .video-controls-container .controls button { background: none; border: none; color: inherit; padding: 0; height: 30px; width: 30px; font-size: 1.1rem; cursor: pointer; opacity: .85; transition: opacity 150ms ease-in-out; }
 .video-controls-container .controls button:hover { opacity: 1; }
@@ -454,7 +488,6 @@ video { width: 100%; height: 100%; object-fit: contain; }
   align-items: center;
   justify-content: center;
   backdrop-filter: blur(8px);
-  /* Animation tied to component re-render */
   animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
 }
 @keyframes popIn {
@@ -468,7 +501,7 @@ video { width: 100%; height: 100%; object-fit: contain; }
 .yt-fade-enter-from, .yt-fade-leave-to { opacity: 0; }
 
 /* Smooth Next Video Fade */
-.fade-slow-enter-active { transition: opacity 0.4s ease-in-out; }
-.fade-slow-leave-active { transition: opacity 0.4s ease-in-out; }
+.fade-slow-enter-active { transition: opacity 0.5s ease-in-out; }
+.fade-slow-leave-active { transition: opacity 0.5s ease-in-out; }
 .fade-slow-enter-from, .fade-slow-leave-to { opacity: 0; }
 </style>
