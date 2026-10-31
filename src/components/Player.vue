@@ -21,7 +21,7 @@ const error = ref(null)
 let player = null
 let objectUrl = null
 let progressInterval = null
-let hideControlsTimeout = null // <--- NEW: Timer to hide controls
+let hideControlsTimeout = null
 
 const useIframe = computed(() => props.videoId && !props.offlineVideoId)
 
@@ -35,7 +35,7 @@ const isFullscreen = ref(false)
 const isScrubbing = ref(false)
 const progressPosition = ref(0)
 const previewPosition = ref(0)
-const showControls = ref(true) // Start visible
+const showControls = ref(true)
 
 // Feedback Animation State
 const feedbackAnim = ref(null) 
@@ -49,15 +49,13 @@ const triggerFeedback = (type) => {
   animTimeout = setTimeout(() => { feedbackAnim.value = null }, 600)
 }
 
-// Next Video State
 const showNextOverlay = ref(false)
 
-// --- Control Visibility Logic (The Fullscreen Fix) ---
+// --- Control Visibility Logic ---
 const resetControlsTimer = () => {
   showControls.value = true
   clearTimeout(hideControlsTimeout)
   
-  // If video is playing, hide controls after 3 seconds of no mouse movement
   if (!isPaused.value) {
     hideControlsTimeout = setTimeout(() => {
       showControls.value = false
@@ -66,7 +64,6 @@ const resetControlsTimer = () => {
 }
 
 const handleMouseLeave = () => {
-  // If the mouse leaves the video area and it's playing, hide immediately
   if (!isPaused.value) {
     showControls.value = false
     clearTimeout(hideControlsTimeout)
@@ -120,11 +117,11 @@ const togglePlayPause = () => {
   if (videoEl.value.paused) {
     videoEl.value.play()
     triggerFeedback('play')
-    resetControlsTimer() // Start the hide timer
+    resetControlsTimer()
   } else {
     videoEl.value.pause()
     triggerFeedback('pause')
-    clearTimeout(hideControlsTimeout) // Stop timer, keep controls open
+    clearTimeout(hideControlsTimeout)
     showControls.value = true
   }
 }
@@ -159,9 +156,7 @@ const toggleFullScreen = () => {
   else document.exitFullscreen()
 }
 
-const goBack = () => {
-  router.back()
-}
+const goBack = () => { router.back() }
 
 // --- Timeline Logic ---
 const handleTimelineUpdate = (e) => {
@@ -236,15 +231,11 @@ const onVolumeChange = () => {
   else volumeLevel.value = 'high'
 }
 
-// --- Next Video Logic ---
 const handleNext = () => {
   if (!props.nextVideoId) return
   videoEl.value?.pause()
   showNextOverlay.value = true 
-  
-  setTimeout(() => {
-    emit('next')
-  }, 500) // 0.5s smooth transition
+  setTimeout(() => { emit('next') }, 500) 
 }
 
 // --- Keyboard Shortcuts ---
@@ -255,8 +246,12 @@ const handleKeydown = (e) => {
 
   const key = e.key.toLowerCase()
   switch (key) {
-    case " ": case "k": if (tagName === "button") return; togglePlayPause(); break
-    case "f": toggleFullScreen(); break
+    case " ": case "k": 
+      if (tagName === "button") return; 
+      e.preventDefault(); // FIX: Stop spacebar from scrolling the page
+      togglePlayPause(); 
+      break
+    case "f": e.preventDefault(); toggleFullScreen(); break
     case "i": if (videoEl.value) { if(document.pictureInPictureElement) document.exitPictureInPicture(); else videoEl.value.requestPictureInPicture() }; break
     case "m": toggleMute(); break
     case "arrowleft": case "j": skip(-5); break
@@ -272,10 +267,8 @@ onMounted(() => {
   document.addEventListener('mousemove', (e) => { if (isScrubbing.value) handleTimelineUpdate(e) })
   document.addEventListener('fullscreenchange', () => { 
     isFullscreen.value = !!document.fullscreenElement 
-    resetControlsTimer() // Reset timer when entering/exiting fullscreen
+    resetControlsTimer() 
   })
-  
-  // Start the initial timer
   resetControlsTimer()
 })
 
@@ -294,13 +287,12 @@ onBeforeUnmount(() => {
   <div 
     ref="containerEl"
     class="video-container group" 
-    :class="{ paused: isPaused, 'full-screen': isFullscreen }"
+    :class="{ paused: isPaused, 'full-screen': isFullscreen, 'hide-cursor': !showControls && isPlaying }"
     :data-volume-level="volumeLevel"
     @mousemove="resetControlsTimer"
     @mouseleave="handleMouseLeave"
     @click="resetControlsTimer"
   >
-    <!-- Back Button Overlay (Top Left) -->
     <button 
       @click="goBack" 
       class="back-btn absolute top-4 left-4 z-50 bg-black/50 hover:bg-black/80 text-white rounded-full p-2 backdrop-blur-sm transition-all duration-300"
@@ -330,7 +322,6 @@ onBeforeUnmount(() => {
         @pause="isPaused = true; clearTimeout(hideControlsTimeout); showControls = true; saveProgress()" 
       ></video>
 
-      <!-- CENTER ANIMATIONS -->
       <transition name="yt-fade">
         <div v-if="feedbackAnim" :key="animKey" class="center-anim-overlay">
           <div class="anim-icon-bg">
@@ -349,12 +340,10 @@ onBeforeUnmount(() => {
         </div>
       </transition>
 
-      <!-- SMOOTH NEXT VIDEO TRANSITION OVERLAY -->
       <transition name="fade-slow">
         <div v-if="showNextOverlay" class="absolute inset-0 bg-black z-50 flex items-center justify-center pointer-events-none"></div>
       </transition>
 
-      <!-- Controls Overlay -->
       <div 
         class="video-controls-container transition-opacity duration-300" 
         :class="showControls || isPaused ? 'opacity-100' : 'opacity-0 pointer-events-none'"
@@ -370,33 +359,20 @@ onBeforeUnmount(() => {
         </div>
         
         <div class="controls">
-          <!-- Play/Pause -->
           <button class="play-pause-btn" @click="togglePlayPause">
-            <svg class="play-icon" viewBox="0 0 24 24">
-              <path fill="currentColor" d="M8,5.14V19.14L19,12.14L8,5.14Z" />
-            </svg>
-            <svg class="pause-icon" viewBox="0 0 24 24">
-              <path fill="currentColor" d="M14,19H18V5H14M6,19H10V5H6V19Z" />
-            </svg>
+            <svg class="play-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M8,5.14V19.14L19,12.14L8,5.14Z" /></svg>
+            <svg class="pause-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M14,19H18V5H14M6,19H10V5H6V19Z" /></svg>
           </button>
 
-          <!-- Next Video -->
           <button v-if="nextVideoId" @click="handleNext" class="next-btn hover:text-red-500 transition-colors">
              <svg viewBox="0 0 24 24" class="w-7 h-7 fill-current"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
           </button>
 
-          <!-- Volume -->
           <div class="volume-container">
             <button class="mute-btn" @click="toggleMute">
-              <svg class="volume-high-icon" viewBox="0 0 24 24">
-                <path fill="currentColor" d="M14,3.23V5.29C16.89,6.15 19,8.83 19,12C19,15.17 16.89,17.84 14,18.7V20.77C18,19.86 21,16.28 21,12C21,7.72 18,4.14 14,3.23M16.5,12C16.5,10.23 15.5,8.71 14,7.97V16C15.5,15.29 16.5,13.76 16.5,12M3,9V15H7L12,20V4L7,9H3Z" />
-              </svg>
-              <svg class="volume-low-icon" viewBox="0 0 24 24">
-                <path fill="currentColor" d="M5,9V15H9L14,20V4L9,9M18.5,12C18.5,10.23 17.5,8.71 16,7.97V16C17.5,15.29 18.5,13.76 18.5,12Z" />
-              </svg>
-              <svg class="volume-muted-icon" viewBox="0 0 24 24">
-                <path fill="currentColor" d="M12,4L9.91,6.09L12,8.18M4.27,3L3,4.27L7.73,9H3V15H7L12,20V13.27L16.25,17.53C15.58,18.04 14.83,18.46 14,18.7V20.77C15.38,20.45 16.63,19.82 17.68,18.96L19.73,21L21,19.73L12,10.73M19,12C19,12.94 18.8,13.82 18.46,14.64L19.97,16.15C20.62,14.91 21,13.5 21,12C21,7.72 18,4.14 14,3.23V5.29C16.89,6.15 19,8.83 19,12M16.5,12C16.5,10.23 15.5,8.71 14,7.97V10.18L16.45,12.63C16.5,12.43 16.5,12.21 16.5,12Z" />
-              </svg>
+              <svg class="volume-high-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M14,3.23V5.29C16.89,6.15 19,8.83 19,12C19,15.17 16.89,17.84 14,18.7V20.77C18,19.86 21,16.28 21,12C21,7.72 18,4.14 14,3.23M16.5,12C16.5,10.23 15.5,8.71 14,7.97V16C15.5,15.29 16.5,13.76 16.5,12M3,9V15H7L12,20V4L7,9H3Z" /></svg>
+              <svg class="volume-low-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M5,9V15H9L14,20V4L9,9M18.5,12C18.5,10.23 17.5,8.71 16,7.97V16C17.5,15.29 18.5,13.76 18.5,12Z" /></svg>
+              <svg class="volume-muted-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12,4L9.91,6.09L12,8.18M4.27,3L3,4.27L7.73,9H3V15H7L12,20V13.27L16.25,17.53C15.58,18.04 14.83,18.46 14,18.7V20.77C15.38,20.45 16.63,19.82 17.68,18.96L19.73,21L21,19.73L12,10.73M19,12C19,12.94 18.8,13.82 18.46,14.64L19.97,16.15C20.62,14.91 21,13.5 21,12C21,7.72 18,4.14 14,3.23V5.29C16.89,6.15 19,8.83 19,12M16.5,12C16.5,10.23 15.5,8.71 14,7.97V10.18L16.45,12.63C16.5,12.43 16.5,12.21 16.5,12Z" /></svg>
             </button>
             <input class="volume-slider" type="range" min="0" max="1" step="any" value="1" @input="updateVolume">
           </div>
@@ -407,41 +383,33 @@ onBeforeUnmount(() => {
             <span class="total-time">{{ totalTime }}</span>
           </div>
 
-          <!-- Speed -->
-          <button class="speed-btn wide-btn" @click="changePlaybackSpeed">
-            {{ playbackSpeed }}
-          </button>
+          <button class="speed-btn wide-btn" @click="changePlaybackSpeed">{{ playbackSpeed }}</button>
 
-          <!-- Fullscreen -->
           <button class="full-screen-btn" @click="toggleFullScreen">
-            <svg class="open" viewBox="0 0 24 24">
-              <path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
-            </svg>
-            <svg class="close" viewBox="0 0 24 24">
-              <path fill="currentColor" d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" />
-            </svg>
+            <svg class="open" viewBox="0 0 24 24"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" /></svg>
+            <svg class="close" viewBox="0 0 24 24"><path fill="currentColor" d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" /></svg>
           </button>
         </div>
       </div>
     </template>
 
-    <div v-if="error" class="absolute inset-0 flex items-center justify-center text-red-400 p-4 text-center bg-black/80 z-50">
-      {{ error }}
-    </div>
+    <div v-if="error" class="absolute inset-0 flex items-center justify-center text-red-400 p-4 text-center bg-black/80 z-50">{{ error }}</div>
   </div>
 </template>
 
 <style scoped>
-/* Base CSS */
+/* ... (Keep all the previous CSS, just add this one class) ... */
 *, *::before, *::after { box-sizing: border-box; }
-.video-container { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; margin-inline: auto; background-color: black; }
+.video-container { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; margin-inline: auto; background-color: black; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); }
 .video-container.full-screen { max-height: 100vh; }
+
+/* FIX: Hide cursor when controls are hidden */
+.hide-cursor { cursor: none !important; }
+.hide-cursor * { cursor: none !important; }
+
 video { width: 100%; height: 100%; object-fit: contain; }
 .video-controls-container { position: absolute; bottom: 0; left: 0; right: 0; color: white; z-index: 100; }
 .video-controls-container::before { content: ""; position: absolute; bottom: 0; background: linear-gradient(to top, rgba(0, 0, 0, .75), transparent); width: 100%; aspect-ratio: 6 / 1; z-index: -1; pointer-events: none; }
-
-/* REMOVED: .video-container:hover .video-controls-container (Vue handles this now) */
-
 .video-controls-container .controls { display: flex; gap: .5rem; padding: .25rem .5rem; align-items: center; }
 .video-controls-container .controls button { background: none; border: none; color: inherit; padding: 0; height: 30px; width: 30px; font-size: 1.1rem; cursor: pointer; opacity: .85; transition: opacity 150ms ease-in-out; }
 .video-controls-container .controls button:hover { opacity: 1; }
@@ -465,42 +433,12 @@ video { width: 100%; height: 100%; object-fit: contain; }
 .timeline .thumb-indicator { --scale: 0; position: absolute; transform: translateX(-50%) scale(var(--scale)); height: 200%; top: -50%; left: calc(var(--progress-position) * 100%); background-color: red; border-radius: 50%; transition: transform 150ms ease-in-out; aspect-ratio: 1 / 1; }
 .video-container.scrubbing .thumb-indicator, .timeline-container:hover .thumb-indicator { --scale: 1; }
 .video-container.scrubbing .timeline, .timeline-container:hover .timeline { height: 100%; }
-
-/* Next button size fix */
 .next-btn { width: 36px !important; height: 36px !important; }
-
-/* Center Animation Overlay */
-.center-anim-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-  z-index: 50;
-}
-.anim-icon-bg {
-  width: 80px;
-  height: 80px;
-  background: rgba(0, 0, 0, 0.6);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  backdrop-filter: blur(8px);
-  animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
-}
-@keyframes popIn {
-  0% { transform: scale(0.8); opacity: 0; }
-  50% { transform: scale(1.05); opacity: 1; }
-  100% { transform: scale(1); opacity: 0; }
-}
-
-/* Vue Transitions */
+.center-anim-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 50; }
+.anim-icon-bg { width: 80px; height: 80px; background: rgba(0, 0, 0, 0.6); border-radius: 50%; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(8px); animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+@keyframes popIn { 0% { transform: scale(0.8); opacity: 0; } 50% { transform: scale(1.05); opacity: 1; } 100% { transform: scale(1); opacity: 0; } }
 .yt-fade-enter-active, .yt-fade-leave-active { transition: opacity 0.2s ease; }
 .yt-fade-enter-from, .yt-fade-leave-to { opacity: 0; }
-
-/* Smooth Next Video Fade */
 .fade-slow-enter-active { transition: opacity 0.5s ease-in-out; }
 .fade-slow-leave-active { transition: opacity 0.5s ease-in-out; }
 .fade-slow-enter-from, .fade-slow-leave-to { opacity: 0; }
