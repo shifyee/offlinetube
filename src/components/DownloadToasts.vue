@@ -11,11 +11,15 @@ const statusColor = {
 </script>
 
 <template>
-  <div class="fixed bottom-4 right-4 space-y-2 w-80 max-w-[calc(100vw-2rem)] z-40">
+  <TransitionGroup 
+    name="toast" 
+    tag="div" 
+    class="fixed bottom-4 right-4 space-y-2 w-80 max-w-[calc(100vw-2rem)] z-40"
+  >
     <div
       v-for="d in downloads.activeList"
       :key="d.id"
-      class="bg-surface border border-white/5 rounded-lg p-3 shadow-xl"
+      class="bg-surface border border-white/5 rounded-lg p-3 shadow-xl backdrop-blur-sm"
     >
       <div class="flex items-center gap-2">
         <img v-if="d.thumbnail" :src="d.thumbnail" class="w-14 h-9 rounded object-cover shrink-0" alt="" />
@@ -30,16 +34,16 @@ const statusColor = {
         <button
           v-if="d.status === 'downloading'"
           @click="downloads.cancel(d.id)"
-          class="text-muted hover:text-white text-lg leading-none shrink-0"
+          class="text-muted hover:text-white text-lg leading-none shrink-0 transition-colors"
           aria-label="Cancel"
         >×</button>
       </div>
       <div class="mt-2 h-1 bg-surface-3 rounded overflow-hidden">
         <div
-          class="h-full bg-accent transition-all duration-200"
+          class="h-full bg-accent transition-all duration-200 ease-out"
           :style="{ width: `${Math.max(2, d.progress * 100)}%` }"
         ></div>
       </div>
     </div>
-  </div>
+  </TransitionGroup>
 </template>
