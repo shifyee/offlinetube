@@ -11,18 +11,23 @@ const duration = computed(() => props.video.lengthSeconds ? formatDuration(props
 const authorName = computed(() => props.video.author || props.video.authorName || '')
 const avatar = computed(() => props.video.authorAvatar || null)
 
-// Offline-safe Base64 SVG fallback
 const handleImageError = (e) => {
+  // If it fails, try to swap 'mqdefault' to 'hqdefault' as a fallback
+  if (e.target.src.includes('mqdefault')) {
+    e.target.src = e.target.src.replace('mqdefault', 'hqdefault');
+    return;
+  }
+  
+  // If that fails too, show the dark SVG placeholder
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9" style="background:#1a1a1a;width:100%;height:100%;display:block;">
     <rect width="16" height="9" fill="#1a1a1a"/>
     <circle cx="8" cy="4.5" r="1.5" fill="#2a2a2a"/>
     <path d="M7.5 3.5L9.5 4.5L7.5 5.5V3.5Z" fill="#666"/>
   </svg>`;
   e.target.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-  e.target.onerror = null; // Prevent infinite loop
+  e.target.onerror = null;
 }
 
-// Offline-safe avatar fallback (hides the broken image so the background shows)
 const handleAvatarError = (e) => {
   e.target.style.display = 'none'
 }
@@ -31,13 +36,12 @@ const handleAvatarError = (e) => {
 <template>
   <RouterLink :to="`/watch/${video.videoId}`" class="block group">
     <div class="relative aspect-video bg-surface rounded-xl overflow-hidden">
-      <!-- Added crossorigin="anonymous" so the Service Worker can cache it -->
+      <!-- REMOVED crossorigin="anonymous" -->
       <img
         v-if="thumb"
         :src="thumb.url"
         :alt="video.title"
         @error="handleImageError"
-        crossorigin="anonymous"
         loading="lazy"
         class="w-full h-full object-cover group-hover:scale-[1.02] transition-transform"
       />
@@ -47,7 +51,6 @@ const handleAvatarError = (e) => {
       >{{ duration }}</span>
     </div>
     <div class="mt-3 flex gap-3">
-      <!-- Channel Avatar -->
       <div class="w-9 h-9 rounded-full bg-surface-2 flex-shrink-0 overflow-hidden flex items-center justify-center font-bold text-muted text-sm">
         <img 
           v-if="avatar" 
