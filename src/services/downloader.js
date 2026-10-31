@@ -52,6 +52,7 @@ export async function downloadVideo(video, streamUrl, expectedSize, { onProgress
     size: 0, 
     addedAt: Date.now(), 
     downloadedAt: null
+    watchProgress: 0
   })
 
   // 3. Download the video data (UNCHANGED)
