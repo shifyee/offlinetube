@@ -1,4 +1,4 @@
-const CACHE_NAME = 'offlinetube-thumbnails-v3';
+const CACHE_NAME = 'offlinetube-thumbnails-v4';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -11,6 +11,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
+  // Catch YouTube thumbnails, avatars, and placeholders
   const isThumbnail = 
     url.hostname.includes('ytimg.com') || 
     url.hostname.includes('img.youtube.com') ||
@@ -24,16 +25,17 @@ self.addEventListener('fetch', (event) => {
       caches.open(CACHE_NAME).then((cache) => {
         return cache.match(event.request).then((cachedResponse) => {
           if (cachedResponse) {
-            return cachedResponse; // Return instantly from cache
+            return cachedResponse; // Return instantly offline
           }
           
           return fetch(event.request).then((networkResponse) => {
-            if (networkResponse.ok) {
+            // THE FIX: Check for opaque responses, not just .ok
+            if (networkResponse.ok || networkResponse.type === 'opaque' || networkResponse.type === 'cors') {
               cache.put(event.request, networkResponse.clone()); 
             }
             return networkResponse;
           }).catch(() => {
-            // OFFLINE & NOT CACHED: Return a professional dark SVG placeholder
+            // Fallback SVG if totally offline and not cached
             const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9" style="background:#1a1a1a;width:100%;height:100%;display:block;">
               <rect width="16" height="9" fill="#1a1a1a"/>
               <circle cx="8" cy="4.5" r="1.5" fill="#2a2a2a"/>
