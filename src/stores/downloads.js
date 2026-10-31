@@ -60,7 +60,6 @@ export const useDownloadsStore = defineStore('downloads', {
         this.active[id].status = 'saving';
         await clearChunks(id);
 
-        // THE FIX: Strip Vue's reactivity (Proxy) by cloning to a plain object
         const plainVideo = JSON.parse(JSON.stringify({
           id,
           title: video.title,
@@ -68,13 +67,14 @@ export const useDownloadsStore = defineStore('downloads', {
           authorId: video.authorId,
           lengthSeconds: video.lengthSeconds,
           thumbnail: this.active[id].thumbnail,
+          authorAvatar: video.authorAvatar || null,
           description: video.description || '',
           comments: video.comments || []
         }));
 
         await db.videos.put({
           ...plainVideo,
-          status: 'complete', progress: 1, size: 0, addedAt: Date.now(), downloadedAt: Date.now()
+          status: 'complete', progress: 1, size: 0, addedAt: Date.now(), downloadedAt: Date.now(), watchProgress: 0
         });
 
         const fileRes = await fetch(`${BACKEND}/api/file/${jobId}`);
@@ -109,6 +109,25 @@ export const useDownloadsStore = defineStore('downloads', {
     },
     cancel(id) {
       if (this.active[id]) delete this.active[id];
+    },
+    // NEW: Delete Prompt Logic
+    promptDelete(id, title, thumbnail) {
+      this.active[id] = {
+        id,
+        title,
+        thumbnail,
+        progress: 1,
+        status: 'prompt_delete',
+      }
+    },
+    dismissDelete(id) {
+      if (this.active[id]) delete this.active[id]
+    },
+    async confirmDelete(id) {
+      delete this.active[id];
+      await db.chunks.where('videoId').equals(id).delete();
+      await db.videos.delete(id);
+      useLibraryStore().refresh();
     }
   }
 })
