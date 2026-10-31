@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import shaka from 'shaka-player/dist/shaka-player.compiled.js'
 
 const props = defineProps({
@@ -42,15 +42,30 @@ const formatTime = (s) => {
 }
 
 // --- Video Controls ---
-const togglePlay = () => { if (videoEl.value.paused) videoEl.value.play(); else videoEl.value.pause() }
-const seek = (amount) => { videoEl.value.currentTime += amount }
-const skip = (time) => { videoEl.value.currentTime = time }
-const toggleMute = () => { videoEl.value.muted = !videoEl.value.muted }
+const togglePlay = () => { 
+  if (!videoEl.value) return
+  if (videoEl.value.paused) videoEl.value.play()
+  else videoEl.value.pause() 
+}
+const seek = (amount) => { if (videoEl.value) videoEl.value.currentTime += amount }
+const skip = (time) => { if (videoEl.value) videoEl.value.currentTime = time }
+const toggleMute = () => { if (videoEl.value) videoEl.value.muted = !videoEl.value.muted }
 const toggleFullscreen = () => {
-  if (!document.fullscreenElement) containerEl.value.requestFullscreen()
+  if (!document.fullscreenElement) containerEl.value?.requestFullscreen()
   else document.exitFullscreen()
 }
-const changeSpeed = (rate) => { videoEl.value.playbackRate = rate; playbackRate.value = rate; showSettings.value = false }
+const changeSpeed = (rate) => { 
+  if (videoEl.value) videoEl.value.playbackRate = rate
+  playbackRate.value = rate
+  showSettings.value = false 
+}
+
+const handleProgressClick = (e) => {
+  if (!videoEl.value || !duration.value) return
+  const rect = e.currentTarget.getBoundingClientRect()
+  const percent = (e.clientX - rect.left) / rect.width
+  skip(percent * duration.value)
+}
 
 // --- UI Events ---
 const showControls = () => {
@@ -71,8 +86,8 @@ const handleKeydown = (e) => {
     case 'ArrowLeft': e.preventDefault(); seek(-5); break
     case 'KeyL': e.preventDefault(); seek(10); break
     case 'KeyJ': e.preventDefault(); seek(-10); break
-    case 'ArrowUp': e.preventDefault(); volume.value = Math.min(1, volume.value + 0.1); break
-    case 'ArrowDown': e.preventDefault(); volume.value = Math.max(0, volume.value - 0.1); break
+    case 'ArrowUp': e.preventDefault(); volume.value = Math.min(1, volume.value + 0.1); if(videoEl.value) videoEl.value.volume = volume.value; break
+    case 'ArrowDown': e.preventDefault(); volume.value = Math.max(0, volume.value - 0.1); if(videoEl.value) videoEl.value.volume = volume.value; break
     case 'KeyM': toggleMute(); break
     case 'KeyF': toggleFullscreen(); break
     case 'Period': changeSpeed(Math.min(2, playbackRate.value + 0.25)); break
@@ -107,20 +122,27 @@ async function setupPlayer() {
 
 // --- Sync State ---
 const onTimeUpdate = () => {
+  if (!videoEl.value) return
   currentTime.value = videoEl.value.currentTime
   if (videoEl.value.buffered.length > 0) {
     buffered.value = videoEl.value.buffered.end(videoEl.value.buffered.length - 1)
   }
 }
-const onLoadedMetadata = () => { duration.value = videoEl.value.duration }
+const onLoadedMetadata = () => { if (videoEl.value) duration.value = videoEl.value.duration }
 const onPlay = () => { isPlaying.value = true; showControls() }
 const onPause = () => { isPlaying.value = false; controlsVisible.value = true }
-const onVolumeChange = () => { volume.value = videoEl.value.volume; isMuted.value = videoEl.value.muted }
+const onVolumeChange = () => { 
+  if (!videoEl.value) return
+  volume.value = videoEl.value.volume
+  isMuted.value = videoEl.value.muted 
+}
+
+const onFullscreenChange = () => { isFullscreen.value = !!document.fullscreenElement }
 
 onMounted(() => {
   setupPlayer()
   window.addEventListener('keydown', handleKeydown)
-  document.addEventListener('fullscreenchange', () => { isFullscreen.value = !!document.fullscreenElement })
+  document.addEventListener('fullscreenchange', onFullscreenChange)
   document.addEventListener('mousemove', showControls)
 })
 
@@ -128,14 +150,15 @@ onBeforeUnmount(() => {
   if (player) player.destroy()
   if (objectUrl) URL.revokeObjectURL(objectUrl)
   window.removeEventListener('keydown', handleKeydown)
-  document.removeEventListener('fullscreenchange', () => {})
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
   document.removeEventListener('mousemove', showControls)
   clearTimeout(hideControlsTimeout)
 })
 </script>
 
 <template>
-  <div ref="containerEl" class="relative w-full h-full bg-black flex items-center justify-center group overflow-hidden" @mousemove="showControls" @click="if(!useIframe) togglePlay()">
+  <!-- THE FIX: Changed @click="if(!useIframe) togglePlay()" to a proper logical AND expression -->
+  <div ref="containerEl" class="relative w-full h-full bg-black flex items-center justify-center group overflow-hidden" @mousemove="showControls" @click="!useIframe && togglePlay()">
     
     <!-- YouTube Iframe (Online) -->
     <iframe 
@@ -175,7 +198,7 @@ onBeforeUnmount(() => {
         @click.stop
       >
         <!-- Progress Bar -->
-        <div class="relative h-1.5 bg-white/20 rounded cursor-pointer group/progress mb-3" @click="(e) => { const rect = e.target.getBoundingClientRect(); skip(((e.clientX - rect.left) / rect.width) * duration) }">
+        <div class="relative h-1.5 bg-white/20 rounded cursor-pointer group/progress mb-3" @click="handleProgressClick">
           <!-- Buffered -->
           <div class="absolute top-0 left-0 h-full bg-white/30 rounded" :style="{ width: `${(buffered / duration) * 100}%` }"></div>
           <!-- Progress -->
