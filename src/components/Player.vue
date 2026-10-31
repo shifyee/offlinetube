@@ -37,12 +37,15 @@ const previewPosition = ref(0)
 const showControls = ref(false)
 
 // Feedback Animation State
-const feedbackAnim = ref(null) // 'play', 'pause', 'forward', 'backward', 'volume', 'mute'
+const feedbackAnim = ref(null) 
+const animKey = ref(0) // Used to force Vue to restart the animation
 let animTimeout = null
+
 const triggerFeedback = (type) => {
   feedbackAnim.value = type
+  animKey.value += 1 // Forces the element to re-render, restarting the CSS animation
   clearTimeout(animTimeout)
-  animTimeout = setTimeout(() => { feedbackAnim.value = null }, 600) // Match CSS duration
+  animTimeout = setTimeout(() => { feedbackAnim.value = null }, 600)
 }
 
 // Next Video State
@@ -85,6 +88,7 @@ const formatTime = (time) => {
 const skip = (seconds) => { 
   if (videoEl.value) {
     videoEl.value.currentTime += seconds
+    // FIXED: If seconds is positive, it's forward. If negative, it's backward.
     triggerFeedback(seconds > 0 ? 'forward' : 'backward')
   }
 }
@@ -125,6 +129,10 @@ const changePlaybackSpeed = () => {
 const toggleFullScreen = () => {
   if (!document.fullscreenElement) containerEl.value?.requestFullscreen()
   else document.exitFullscreen()
+}
+
+const goBack = () => {
+  router.back()
 }
 
 // --- Timeline Logic ---
@@ -202,12 +210,14 @@ const onVolumeChange = () => {
 const handleNext = () => {
   if (!props.nextVideoId) return
   videoEl.value?.pause()
-  showNextOverlay.value = true
+  showNextOverlay.value = true // Shows the black fade overlay
   
-  // After 2 seconds, emit the next event (which triggers route change in parent)
+  // After 1.5 seconds, emit the next event
   setTimeout(() => {
     emit('next')
-  }, 2000)
+    // The parent will change the route, which destroys this component. 
+    // The overlay will naturally fade out as the new video loads.
+  }, 1500)
 }
 
 // --- Keyboard Shortcuts ---
@@ -255,6 +265,15 @@ onBeforeUnmount(() => {
     @mouseleave="showControls = false"
     @mousemove="showControls = true"
   >
+    <!-- Back Button Overlay (Top Left) -->
+    <button 
+      @click="goBack" 
+      class="back-btn absolute top-4 left-4 z-50 bg-black/50 hover:bg-black/80 text-white rounded-full p-2 backdrop-blur-sm transition-all"
+      :class="showControls ? 'opacity-100' : 'opacity-0'"
+    >
+      <svg viewBox="0 0 24 24" class="w-6 h-6 fill-current"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+    </button>
+
     <iframe 
       v-if="useIframe"
       :src="`https://www.youtube.com/embed/${videoId}?autoplay=0&rel=0`"
@@ -278,36 +297,32 @@ onBeforeUnmount(() => {
 
       <!-- CENTER ANIMATIONS (Play/Pause/Volume/Skip) -->
       <transition name="yt-fade">
-        <div v-if="feedbackAnim" class="center-anim-overlay">
+        <!-- The :key="animKey" is the magic fix. It destroys and recreates the DOM element, ensuring the CSS animation restarts instantly. -->
+        <div v-if="feedbackAnim" :key="animKey" class="center-anim-overlay">
           <div class="anim-icon-bg">
             <!-- Play -->
             <svg v-if="feedbackAnim === 'play'" viewBox="0 0 24 24" class="w-12 h-12 fill-white"><path d="M8,5.14V19.14L19,12.14L8,5.14Z" /></svg>
             <!-- Pause -->
             <svg v-else-if="feedbackAnim === 'pause'" viewBox="0 0 24 24" class="w-12 h-12 fill-white"><path d="M14,19H18V5H14M6,19H10V5H6V19Z" /></svg>
-            <!-- Forward -->
-            <svg v-else-if="feedbackAnim === 'forward'" viewBox="0 0 24 24" class="w-12 h-12 fill-white"><path d="M11.5 12l8.5 6V6l-8.5 6zm-9 0l8.5 6V6l-8.5 6z"/></svg>
-            <!-- Backward -->
-            <svg v-else-if="feedbackAnim === 'backward'" viewBox="0 0 24 24" class="w-12 h-12 fill-white"><path d="M12.5 12L4 18V6l8.5 6zm9 0L13 18V6l8.5 6z"/></svg>
+            <!-- Forward (Standard Fast Forward Icon) -->
+            <svg v-else-if="feedbackAnim === 'forward'" viewBox="0 0 24 24" class="w-12 h-12 fill-white"><path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/></svg>
+            <!-- Backward (Standard Fast Rewind Icon) -->
+            <svg v-else-if="feedbackAnim === 'backward'" viewBox="0 0 24 24" class="w-12 h-12 fill-white"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>
             <!-- Volume / Mute -->
             <div v-else-if="feedbackAnim === 'volume' || feedbackAnim === 'mute'" class="flex flex-col items-center">
               <svg v-if="volumeLevel === 'muted'" viewBox="0 0 24 24" class="w-10 h-10 fill-white mb-1"><path fill="currentColor" d="M12,4L9.91,6.09L12,8.18M4.27,3L3,4.27L7.73,9H3V15H7L12,20V13.27L16.25,17.53C15.58,18.04 14.83,18.46 14,18.7V20.77C15.38,20.45 16.63,19.82 17.68,18.96L19.73,21L21,19.73L12,10.73M19,12C19,12.94 18.8,13.82 18.46,14.64L19.97,16.15C20.62,14.91 21,13.5 21,12C21,7.72 18,4.14 14,3.23V5.29C16.89,6.15 19,8.83 19,12M16.5,12C16.5,10.23 15.5,8.71 14,7.97V10.18L16.45,12.63C16.5,12.43 16.5,12.21 16.5,12Z" /></svg>
               <svg v-else viewBox="0 0 24 24" class="w-10 h-10 fill-white mb-1"><path fill="currentColor" d="M14,3.23V5.29C16.89,6.15 19,8.83 19,12C19,15.17 16.89,17.84 14,18.7V20.77C18,19.86 21,16.28 21,12C21,7.72 18,4.14 14,3.23M16.5,12C16.5,10.23 15.5,8.71 14,7.97V16C15.5,15.29 16.5,13.76 16.5,12M3,9V15H7L12,20V4L7,9H3Z" /></svg>
               <div class="w-24 h-1.5 bg-white/30 rounded-full overflow-hidden">
-                <div class="h-full bg-white rounded-full" :style="{ width: `${videoEl?.volume * 100 || 0}%` }"></div>
+                <div class="h-full bg-white rounded-full transition-all duration-100" :style="{ width: `${videoEl?.volume * 100 || 0}%` }"></div>
               </div>
             </div>
           </div>
         </div>
       </transition>
 
-      <!-- NEXT VIDEO OVERLAY -->
-      <transition name="yt-fade">
-        <div v-if="showNextOverlay" class="next-overlay">
-          <div class="text-white text-xl font-bold mb-4">Up Next</div>
-          <div class="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm">
-            <svg viewBox="0 0 24 24" class="w-8 h-8 fill-white ml-1"><path d="M8,5.14V19.14L19,12.14L8,5.14Z" /></svg>
-          </div>
-        </div>
+      <!-- SMOOTH NEXT VIDEO TRANSITION OVERLAY -->
+      <transition name="fade-slow">
+        <div v-if="showNextOverlay" class="absolute inset-0 bg-black z-50 flex items-center justify-center pointer-events-none"></div>
       </transition>
 
       <!-- Controls Overlay -->
@@ -333,7 +348,7 @@ onBeforeUnmount(() => {
             </svg>
           </button>
 
-          <!-- Next Video (Made Larger) -->
+          <!-- Next Video -->
           <button v-if="nextVideoId" @click="handleNext" class="next-btn hover:text-red-500 transition-colors">
              <svg viewBox="0 0 24 24" class="w-7 h-7 fill-current"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
           </button>
@@ -385,7 +400,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* Base CSS (from previous) */
+/* Base CSS */
 *, *::before, *::after { box-sizing: border-box; }
 .video-container { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; margin-inline: auto; background-color: black; }
 .video-container.full-screen { max-height: 100vh; }
@@ -417,10 +432,10 @@ video { width: 100%; height: 100%; object-fit: contain; }
 .video-container.scrubbing .thumb-indicator, .timeline-container:hover .thumb-indicator { --scale: 1; }
 .video-container.scrubbing .timeline, .timeline-container:hover .timeline { height: 100%; }
 
-/* NEW: Next button size fix */
+/* Next button size fix */
 .next-btn { width: 36px !important; height: 36px !important; }
 
-/* NEW: Center Animation Overlay */
+/* Center Animation Overlay */
 .center-anim-overlay {
   position: absolute;
   inset: 0;
@@ -439,28 +454,21 @@ video { width: 100%; height: 100%; object-fit: contain; }
   align-items: center;
   justify-content: center;
   backdrop-filter: blur(8px);
-  animation: popIn 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+  /* Animation tied to component re-render */
+  animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
 }
 @keyframes popIn {
-  0% { transform: scale(0.5); opacity: 0; }
-  50% { transform: scale(1.1); opacity: 1; }
+  0% { transform: scale(0.8); opacity: 0; }
+  50% { transform: scale(1.05); opacity: 1; }
   100% { transform: scale(1); opacity: 0; }
 }
 
-/* NEW: Next Video Overlay */
-.next-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.7);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  z-index: 60;
-  backdrop-filter: blur(4px);
-}
-
 /* Vue Transitions */
-.yt-fade-enter-active, .yt-fade-leave-active { transition: opacity 0.3s ease; }
+.yt-fade-enter-active, .yt-fade-leave-active { transition: opacity 0.2s ease; }
 .yt-fade-enter-from, .yt-fade-leave-to { opacity: 0; }
+
+/* Smooth Next Video Fade */
+.fade-slow-enter-active { transition: opacity 1.5s ease-in-out; }
+.fade-slow-leave-active { transition: opacity 0.5s ease-in-out; }
+.fade-slow-enter-from, .fade-slow-leave-to { opacity: 0; }
 </style>
