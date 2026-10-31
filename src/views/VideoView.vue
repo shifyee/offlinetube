@@ -118,7 +118,13 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
 
       <div v-else-if="video">
         <div class="aspect-video bg-black rounded-xl overflow-hidden shadow-lg">
-          <Player :video-id="isOffline ? null : route.params.id" :offline-video-id="isOffline ? route.params.id : null" :poster="poster" />
+          <Player 
+          :video-id="isOffline ? null : route.params.id" 
+          :offline-video-id="isOffline ? route.params.id : null" 
+          :poster="poster" 
+          :next-video-id="upNext[0]?.videoId || upNext[0]?.id"
+          @next="$router.push(`/watch/${upNext[0]?.videoId || upNext[0]?.id}`)"
+          />
         </div>
 
         <h1 class="text-xl font-bold mt-3">{{ video.title }}</h1>
