@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import shaka from 'shaka-player/dist/shaka-player.compiled.js'
 
 const props = defineProps({
@@ -10,91 +11,29 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['next'])
+const router = useRouter()
 
 const videoEl = ref(null)
 const containerEl = ref(null)
+const timelineContainerEl = ref(null)
 const error = ref(null)
 let player = null
 let objectUrl = null
 
 const useIframe = computed(() => props.videoId && !props.offlineVideoId)
 
-// Custom Player State
-const isPlaying = ref(false)
-const currentTime = ref(0)
-const duration = ref(0)
-const volume = ref(1)
-const isMuted = ref(false)
-const playbackRate = ref(1)
+// --- State (Porting the Vanilla JS to Vue) ---
+const isPaused = ref(true)
+const volumeLevel = ref('high') // 'high', 'low', 'muted'
+const currentTime = ref('0:00')
+const totalTime = ref('0:00')
+const playbackSpeed = ref('1x')
+const isTheater = ref(false)
 const isFullscreen = ref(false)
-const controlsVisible = ref(true)
-const showSettings = ref(false)
-const buffered = ref(0)
-let hideControlsTimeout = null
-
-// Format time (e.g., 1:05)
-const formatTime = (s) => {
-  if (!s || isNaN(s)) return '0:00'
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const ss = Math.floor(s % 60)
-  return (h ? `${h}:` : '') + `${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
-}
-
-// --- Video Controls ---
-const togglePlay = () => { 
-  if (!videoEl.value) return
-  if (videoEl.value.paused) videoEl.value.play()
-  else videoEl.value.pause() 
-}
-const seek = (amount) => { if (videoEl.value) videoEl.value.currentTime += amount }
-const skip = (time) => { if (videoEl.value) videoEl.value.currentTime = time }
-const toggleMute = () => { if (videoEl.value) videoEl.value.muted = !videoEl.value.muted }
-const toggleFullscreen = () => {
-  if (!document.fullscreenElement) containerEl.value?.requestFullscreen()
-  else document.exitFullscreen()
-}
-const changeSpeed = (rate) => { 
-  if (videoEl.value) videoEl.value.playbackRate = rate
-  playbackRate.value = rate
-  showSettings.value = false 
-}
-
-const handleProgressClick = (e) => {
-  if (!videoEl.value || !duration.value) return
-  const rect = e.currentTarget.getBoundingClientRect()
-  const percent = (e.clientX - rect.left) / rect.width
-  skip(percent * duration.value)
-}
-
-// --- UI Events ---
-const showControls = () => {
-  controlsVisible.value = true
-  clearTimeout(hideControlsTimeout)
-  if (isPlaying.value && !showSettings.value) {
-    hideControlsTimeout = setTimeout(() => { controlsVisible.value = false }, 3000)
-  }
-}
-
-const handleKeydown = (e) => {
-  if (useIframe.value) return // Ignore shortcuts if using YouTube iframe
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
-  
-  switch(e.code) {
-    case 'Space': case 'KeyK': e.preventDefault(); togglePlay(); break
-    case 'ArrowRight': e.preventDefault(); seek(5); break
-    case 'ArrowLeft': e.preventDefault(); seek(-5); break
-    case 'KeyL': e.preventDefault(); seek(10); break
-    case 'KeyJ': e.preventDefault(); seek(-10); break
-    case 'ArrowUp': e.preventDefault(); volume.value = Math.min(1, volume.value + 0.1); if(videoEl.value) videoEl.value.volume = volume.value; break
-    case 'ArrowDown': e.preventDefault(); volume.value = Math.max(0, volume.value - 0.1); if(videoEl.value) videoEl.value.volume = volume.value; break
-    case 'KeyM': toggleMute(); break
-    case 'KeyF': toggleFullscreen(); break
-    case 'Period': changeSpeed(Math.min(2, playbackRate.value + 0.25)); break
-    case 'Comma': changeSpeed(Math.max(0.25, playbackRate.value - 0.25)); break
-  }
-  showControls()
-}
+const isScrubbing = ref(false)
+const progressPosition = ref(0)
+const previewPosition = ref(0)
+const showControls = ref(false)
 
 // --- Shaka Setup ---
 async function setupPlayer() {
@@ -103,7 +42,6 @@ async function setupPlayer() {
   
   shaka.polyfill.installAll()
   player = new shaka.Player()
-  
   player.addEventListener('error', (e) => { error.value = `Player error: ${e.detail}` })
   
   await player.attach(videoEl.value)
@@ -120,140 +58,249 @@ async function setupPlayer() {
   }
 }
 
-// --- Sync State ---
-const onTimeUpdate = () => {
-  if (!videoEl.value) return
-  currentTime.value = videoEl.value.currentTime
-  if (videoEl.value.buffered.length > 0) {
-    buffered.value = videoEl.value.buffered.end(videoEl.value.buffered.length - 1)
+// --- Helpers ---
+const formatTime = (time) => {
+  const minutes = Math.floor(time / 60)
+  const seconds = Math.floor(time % 60)
+  const hours = Math.floor(time / 3600)
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
   }
-}
-const onLoadedMetadata = () => { if (videoEl.value) duration.value = videoEl.value.duration }
-const onPlay = () => { isPlaying.value = true; showControls() }
-const onPause = () => { isPlaying.value = false; controlsVisible.value = true }
-const onVolumeChange = () => { 
-  if (!videoEl.value) return
-  volume.value = videoEl.value.volume
-  isMuted.value = videoEl.value.muted 
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`
 }
 
-const onFullscreenChange = () => { isFullscreen.value = !!document.fullscreenElement }
+const skip = (seconds) => {
+  if (videoEl.value) videoEl.value.currentTime += seconds
+}
+
+const togglePlayPause = () => {
+  if (!videoEl.value) return
+  if (videoEl.value.paused) videoEl.value.play()
+  else videoEl.value.pause()
+}
+
+const toggleMute = () => {
+  if (videoEl.value) videoEl.value.muted = !videoEl.value.muted
+}
+
+const updateVolume = (e) => {
+  if (!videoEl.value) return
+  videoEl.value.volume = e.target.value
+  videoEl.value.muted = e.target.value === 0
+}
+
+const changePlaybackSpeed = () => {
+  if (!videoEl.value) return
+  let newSpeed = videoEl.value.playbackRate + 0.25
+  if (newSpeed > 2) newSpeed = 0.5
+  videoEl.value.playbackRate = newSpeed
+  playbackSpeed.value = `${newSpeed}x`
+}
+
+const toggleTheater = () => { isTheater.value = !isTheater.value }
+
+const toggleFullScreen = () => {
+  if (!document.fullscreenElement) containerEl.value?.requestFullscreen()
+  else document.exitFullscreen()
+}
+
+const toggleMiniPlayer = () => {
+  if (document.pictureInPictureElement) document.exitPictureInPicture()
+  else videoEl.value?.requestPictureInPicture()
+}
+
+// --- Timeline Logic ---
+const handleTimelineUpdate = (e) => {
+  if (!timelineContainerEl.value || !videoEl.value) return
+  const { left, width } = timelineContainerEl.value.getBoundingClientRect()
+  const percent = Math.min(1, Math.max(0, (e.clientX - left) / width))
+  
+  previewPosition.value = percent
+  if (isScrubbing.value) {
+    e.preventDefault()
+    progressPosition.value = percent
+    videoEl.value.currentTime = percent * videoEl.value.duration
+  }
+}
+
+const toggleScrubbing = (e) => {
+  if (!timelineContainerEl.value || !videoEl.value) return
+  const { left, width } = timelineContainerEl.value.getBoundingClientRect()
+  const percent = Math.min(1, Math.max(0, (e.clientX - left) / width))
+  
+  isScrubbing.value = (e.buttons & 1) === 1
+  if (isScrubbing.value) {
+    videoEl.value.pause()
+  } else {
+    videoEl.value.currentTime = percent * videoEl.value.duration
+    if (!isPaused.value) videoEl.value.play()
+  }
+  handleTimelineUpdate(e)
+}
+
+// --- Video Events ---
+const onTimeUpdate = () => {
+  if (!videoEl.value) return
+  currentTime.value = formatTime(videoEl.value.currentTime)
+  progressPosition.value = videoEl.value.currentTime / videoEl.value.duration
+}
+
+const onLoadedMetadata = () => {
+  if (videoEl.value) totalTime.value = formatTime(videoEl.value.duration)
+}
+
+const onVolumeChange = () => {
+  if (!videoEl.value) return
+  if (videoEl.value.volume === 0 || videoEl.value.muted) volumeLevel.value = 'muted'
+  else if (videoEl.value.volume < 0.5) volumeLevel.value = 'low'
+  else volumeLevel.value = 'high'
+}
+
+// --- Keyboard Shortcuts ---
+const handleKeydown = (e) => {
+  if (useIframe.value) return
+  const tagName = document.activeElement.tagName.toLowerCase()
+  if (tagName === "input" || tagName === "textarea") return
+
+  const key = e.key.toLowerCase()
+  switch (key) {
+    case " ": case "k": if (tagName === "button") return; togglePlayPause(); break
+    case "f": toggleFullScreen(); break
+    case "t": toggleTheater(); break
+    case "i": toggleMiniPlayer(); break
+    case "m": toggleMute(); break
+    case "arrowleft": case "j": skip(-5); break
+    case "arrowright": case "l": skip(5); break
+  }
+}
 
 onMounted(() => {
   setupPlayer()
   window.addEventListener('keydown', handleKeydown)
-  document.addEventListener('fullscreenchange', onFullscreenChange)
-  document.addEventListener('mousemove', showControls)
+  document.addEventListener('mouseup', (e) => { if (isScrubbing.value) toggleScrubbing(e) })
+  document.addEventListener('mousemove', (e) => { if (isScrubbing.value) handleTimelineUpdate(e) })
+  document.addEventListener('fullscreenchange', () => { isFullscreen.value = !!document.fullscreenElement })
 })
 
 onBeforeUnmount(() => {
   if (player) player.destroy()
   if (objectUrl) URL.revokeObjectURL(objectUrl)
   window.removeEventListener('keydown', handleKeydown)
-  document.removeEventListener('fullscreenchange', onFullscreenChange)
-  document.removeEventListener('mousemove', showControls)
-  clearTimeout(hideControlsTimeout)
 })
 </script>
 
 <template>
-  <!-- THE FIX: Changed @click="if(!useIframe) togglePlay()" to a proper logical AND expression -->
-  <div ref="containerEl" class="relative w-full h-full bg-black flex items-center justify-center group overflow-hidden" @mousemove="showControls" @click="!useIframe && togglePlay()">
-    
-    <!-- YouTube Iframe (Online) -->
+  <div 
+    ref="containerEl"
+    class="video-container group" 
+    :class="{ paused: isPaused, theater: isTheater, 'full-screen': isFullscreen }"
+    :data-volume-level="volumeLevel"
+    @mouseenter="showControls = true"
+    @mouseleave="showControls = false"
+    @mousemove="showControls = true"
+  >
     <iframe 
       v-if="useIframe"
       :src="`https://www.youtube.com/embed/${videoId}?autoplay=0&rel=0`"
-      class="w-full h-full border-0"
+      class="w-full h-full border-0 absolute inset-0"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
       allowfullscreen
     ></iframe>
 
-    <!-- Custom Player (Offline) -->
     <template v-else>
       <video
         ref="videoEl"
-        playsinline
         :poster="poster || undefined"
-        class="w-full h-full object-contain"
+        playsinline
+        @click="togglePlayPause"
         @timeupdate="onTimeUpdate"
         @loadedmetadata="onLoadedMetadata"
-        @play="onPlay"
-        @pause="onPause"
         @volumechange="onVolumeChange"
-        @click.stop="togglePlay"
+        @play="isPaused = false"
+        @pause="isPaused = true"
       ></video>
 
-      <!-- Center Play Button (if paused) -->
-      <div v-if="!isPlaying && !error" class="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div class="w-20 h-20 bg-black/60 rounded-full flex items-center justify-center backdrop-blur-sm">
-          <svg viewBox="0 0 24 24" class="w-10 h-10 fill-white ml-1"><path d="M8 5v14l11-7z"/></svg>
-        </div>
-      </div>
-
-      <!-- Custom Controls Overlay -->
-      <div 
-        class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pt-16 pb-2 px-3 transition-opacity duration-300 pointer-events-auto"
-        :class="controlsVisible ? 'opacity-100' : 'opacity-0'"
-        @click.stop
-      >
-        <!-- Progress Bar -->
-        <div class="relative h-1.5 bg-white/20 rounded cursor-pointer group/progress mb-3" @click="handleProgressClick">
-          <!-- Buffered -->
-          <div class="absolute top-0 left-0 h-full bg-white/30 rounded" :style="{ width: `${(buffered / duration) * 100}%` }"></div>
-          <!-- Progress -->
-          <div class="absolute top-0 left-0 h-full bg-red-600 rounded" :style="{ width: `${(currentTime / duration) * 100}%` }">
-            <div class="absolute right-0 top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-red-600 rounded-full scale-0 group-hover/progress:scale-100 transition-transform shadow-lg"></div>
+      <!-- Controls Overlay -->
+      <div class="video-controls-container" :class="{ 'opacity-100': showControls || isPaused }">
+        <div class="timeline-container" 
+             ref="timelineContainerEl"
+             @mousemove="handleTimelineUpdate"
+             @mousedown="toggleScrubbing"
+        >
+          <div class="timeline" :style="{ '--progress-position': progressPosition, '--preview-position': previewPosition }">
+            <div class="thumb-indicator"></div>
           </div>
         </div>
+        
+        <div class="controls">
+          <!-- Play/Pause -->
+          <button class="play-pause-btn" @click="togglePlayPause">
+            <svg class="play-icon" viewBox="0 0 24 24">
+              <path fill="currentColor" d="M8,5.14V19.14L19,12.14L8,5.14Z" />
+            </svg>
+            <svg class="pause-icon" viewBox="0 0 24 24">
+              <path fill="currentColor" d="M14,19H18V5H14M6,19H10V5H6V19Z" />
+            </svg>
+          </button>
 
-        <!-- Bottom Controls -->
-        <div class="flex items-center justify-between text-white text-sm">
-          <div class="flex items-center gap-4">
-            <!-- Play/Pause -->
-            <button @click="togglePlay" class="hover:text-red-500 transition-colors">
-              <svg v-if="!isPlaying" viewBox="0 0 24 24" class="w-7 h-7 fill-current"><path d="M8 5v14l11-7z"/></svg>
-              <svg v-else viewBox="0 0 24 24" class="w-7 h-7 fill-current"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+          <!-- Next Video (Custom Addition) -->
+          <button v-if="nextVideoId" @click="emit('next')" class="hover:text-red-500 transition-colors">
+             <svg viewBox="0 0 24 24" class="w-6 h-6 fill-current"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+          </button>
+
+          <!-- Volume -->
+          <div class="volume-container">
+            <button class="mute-btn" @click="toggleMute">
+              <svg class="volume-high-icon" viewBox="0 0 24 24">
+                <path fill="currentColor" d="M14,3.23V5.29C16.89,6.15 19,8.83 19,12C19,15.17 16.89,17.84 14,18.7V20.77C18,19.86 21,16.28 21,12C21,7.72 18,4.14 14,3.23M16.5,12C16.5,10.23 15.5,8.71 14,7.97V16C15.5,15.29 16.5,13.76 16.5,12M3,9V15H7L12,20V4L7,9H3Z" />
+              </svg>
+              <svg class="volume-low-icon" viewBox="0 0 24 24">
+                <path fill="currentColor" d="M5,9V15H9L14,20V4L9,9M18.5,12C18.5,10.23 17.5,8.71 16,7.97V16C17.5,15.29 18.5,13.76 18.5,12Z" />
+              </svg>
+              <svg class="volume-muted-icon" viewBox="0 0 24 24">
+                <path fill="currentColor" d="M12,4L9.91,6.09L12,8.18M4.27,3L3,4.27L7.73,9H3V15H7L12,20V13.27L16.25,17.53C15.58,18.04 14.83,18.46 14,18.7V20.77C15.38,20.45 16.63,19.82 17.68,18.96L19.73,21L21,19.73L12,10.73M19,12C19,12.94 18.8,13.82 18.46,14.64L19.97,16.15C20.62,14.91 21,13.5 21,12C21,7.72 18,4.14 14,3.23V5.29C16.89,6.15 19,8.83 19,12M16.5,12C16.5,10.23 15.5,8.71 14,7.97V10.18L16.45,12.63C16.5,12.43 16.5,12.21 16.5,12Z" />
+              </svg>
             </button>
-            
-            <!-- Next Video -->
-            <button v-if="nextVideoId" @click="emit('next')" class="hover:text-red-500 transition-colors">
-              <svg viewBox="0 0 24 24" class="w-7 h-7 fill-current"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
-            </button>
-
-            <!-- Volume -->
-            <div class="flex items-center gap-2 group/volume relative">
-              <button @click="toggleMute" class="hover:text-red-500 transition-colors">
-                <svg v-if="isMuted || volume === 0" viewBox="0 0 24 24" class="w-6 h-6 fill-current"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
-                <svg v-else-if="volume < 0.5" viewBox="0 0 24 24" class="w-6 h-6 fill-current"><path d="M18.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM5 9v6h4l5 5V4L9 9H5z"/></svg>
-                <svg v-else viewBox="0 0 24 24" class="w-6 h-6 fill-current"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
-              </button>
-              <input type="range" min="0" max="1" step="0.05" v-model.number="volume" @input="videoEl.volume = volume" class="w-0 group-hover/volume:w-20 transition-all duration-300 accent-red-600 cursor-pointer" />
-            </div>
-
-            <!-- Time -->
-            <span class="font-medium text-xs tracking-wide">{{ formatTime(currentTime) }} / {{ formatTime(duration) }}</span>
+            <input class="volume-slider" type="range" min="0" max="1" step="any" value="1" @input="updateVolume">
           </div>
 
-          <div class="flex items-center gap-4">
-            <!-- Playback Speed -->
-            <div class="relative">
-              <button @click="showSettings = !showSettings" class="hover:text-red-500 transition-colors font-medium text-xs px-2 py-1 bg-white/10 rounded">
-                {{ playbackRate }}x
-              </button>
-              <div v-if="showSettings" class="absolute bottom-full right-0 mb-2 bg-surface border border-white/10 rounded shadow-xl py-1 w-24">
-                <button v-for="rate in [0.5, 0.75, 1, 1.25, 1.5, 2]" :key="rate" @click="changeSpeed(rate)" class="block w-full text-left px-4 py-1.5 hover:bg-white/10 text-xs" :class="{'text-red-500': playbackRate === rate}">
-                  {{ rate }}x
-                </button>
-              </div>
-            </div>
-
-            <!-- Fullscreen -->
-            <button @click="toggleFullscreen" class="hover:text-red-500 transition-colors">
-              <svg v-if="!isFullscreen" viewBox="0 0 24 24" class="w-6 h-6 fill-current"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
-              <svg v-else viewBox="0 0 24 24" class="w-6 h-6 fill-current"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>
-            </button>
+          <div class="duration-container">
+            <span class="current-time">{{ currentTime }}</span>
+            <span class="duration-separator">/</span>
+            <span class="total-time">{{ totalTime }}</span>
           </div>
+
+          <!-- Speed -->
+          <button class="speed-btn wide-btn" @click="changePlaybackSpeed">
+            {{ playbackSpeed }}
+          </button>
+
+          <!-- Mini Player -->
+          <button class="mini-player-btn" @click="toggleMiniPlayer">
+            <svg viewBox="0 0 24 24">
+              <path fill="currentColor" d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zm-10-7h9v6h-9z" />
+            </svg>
+          </button>
+
+          <!-- Theater -->
+          <button class="theater-btn" @click="toggleTheater">
+            <svg class="tall" viewBox="0 0 24 24">
+              <path fill="currentColor" d="M19 6H5c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 10H5V8h14v8z" />
+            </svg>
+            <svg class="wide" viewBox="0 0 24 24">
+              <path fill="currentColor" d="M19 7H5c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2zm0 8H5V9h14v6z" />
+            </svg>
+          </button>
+
+          <!-- Fullscreen -->
+          <button class="full-screen-btn" @click="toggleFullScreen">
+            <svg class="open" viewBox="0 0 24 24">
+              <path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+            </svg>
+            <svg class="close" viewBox="0 0 24 24">
+              <path fill="currentColor" d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" />
+            </svg>
+          </button>
         </div>
       </div>
     </template>
@@ -263,3 +310,225 @@ onBeforeUnmount(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Copied EXACTLY from the repository CSS */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+.video-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  margin-inline: auto;
+  background-color: black;
+}
+
+.video-container.theater,
+.video-container.full-screen {
+  max-width: initial;
+  width: 100%;
+}
+
+.video-container.theater {
+  max-height: 90vh;
+}
+
+.video-container.full-screen {
+  max-height: 100vh;
+}
+
+video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.video-controls-container {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  color: white;
+  z-index: 100;
+  opacity: 0;
+  transition: opacity 150ms ease-in-out;
+}
+
+.video-controls-container::before {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, .75), transparent);
+  width: 100%;
+  aspect-ratio: 6 / 1;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* We use a class binding instead of hover to allow it to stay open on pause */
+.video-container:hover .video-controls-container,
+.video-container:focus-within .video-controls-container,
+.video-container.paused .video-controls-container {
+  opacity: 1;
+}
+
+.video-controls-container .controls {
+  display: flex;
+  gap: .5rem;
+  padding: .25rem .5rem;
+  align-items: center;
+}
+
+.video-controls-container .controls button {
+  background: none;
+  border: none;
+  color: inherit;
+  padding: 0;
+  height: 30px;
+  width: 30px;
+  font-size: 1.1rem;
+  cursor: pointer;
+  opacity: .85;
+  transition: opacity 150ms ease-in-out;
+}
+
+.video-controls-container .controls button:hover {
+  opacity: 1;
+}
+
+.video-container.paused .pause-icon {
+  display: none;
+}
+
+.video-container:not(.paused) .play-icon {
+  display: none;
+}
+
+.video-container.theater .tall {
+  display: none;
+}
+
+.video-container:not(.theater) .wide {
+  display: none;
+}
+
+.video-container.full-screen .open {
+  display: none;
+}
+
+.video-container:not(.full-screen) .close {
+  display: none;
+}
+
+.volume-high-icon,
+.volume-low-icon,
+.volume-muted-icon {
+  display: none;
+}
+
+.video-container[data-volume-level="high"] .volume-high-icon {
+  display: block;
+}
+
+.video-container[data-volume-level="low"] .volume-low-icon {
+  display: block;
+}
+
+.video-container[data-volume-level="muted"] .volume-muted-icon {
+  display: block;
+}
+
+.volume-container {
+  display: flex;
+  align-items: center;
+}
+
+.volume-slider {
+  width: 0;
+  transform-origin: left;
+  transform: scaleX(0);
+  transition: width 150ms ease-in-out, transform 150ms ease-in-out;
+  accent-color: red;
+  cursor: pointer;
+}
+
+.volume-container:hover .volume-slider,
+.volume-slider:focus-within {
+  width: 100px;
+  transform: scaleX(1);
+}
+
+.duration-container {
+  display: flex;
+  align-items: center;
+  gap: .25rem;
+  flex-grow: 1;
+}
+
+.video-controls-container .controls button.wide-btn {
+  width: 50px;
+}
+
+.timeline-container {
+  height: 7px;
+  margin-inline: .5rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.timeline {
+  background-color: rgba(100, 100, 100, .5);
+  height: 3px;
+  width: 100%;
+  position: relative
+}
+
+.timeline::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  right: calc(100% - var(--preview-position) * 100%);
+  background-color: rgb(150, 150, 150);
+  display: none;
+}
+
+.timeline::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  right: calc(100% - var(--progress-position) * 100%);
+  background-color: red;
+}
+
+.timeline .thumb-indicator {
+  --scale: 0;
+  position: absolute;
+  transform: translateX(-50%) scale(var(--scale));
+  height: 200%;
+  top: -50%;
+  left: calc(var(--progress-position) * 100%);
+  background-color: red;
+  border-radius: 50%;
+  transition: transform 150ms ease-in-out;
+  aspect-ratio: 1 / 1;
+}
+
+.video-container.scrubbing .thumb-indicator,
+.timeline-container:hover .thumb-indicator {
+  --scale: 1;
+}
+
+.video-container.scrubbing .timeline,
+.timeline-container:hover .timeline {
+  height: 100%;
+}
+</style>
