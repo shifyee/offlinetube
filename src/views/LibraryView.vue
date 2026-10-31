@@ -84,10 +84,12 @@ onUnmounted(() => clearInterval(interval))
       >
         <RouterLink :to="`/watch/${v.id}`">
           <div class="aspect-video bg-surface-2 overflow-hidden">
+            <!-- THE FIX: Added crossorigin="anonymous" -->
             <img 
               v-if="v.thumbnail" 
               :src="v.thumbnail" 
               @error="handleImageError"
+              crossorigin="anonymous"
               class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" 
               alt="" 
             />
