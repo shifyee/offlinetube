@@ -39,16 +39,19 @@ function doSearch() {
 
 <template>
   <div class="min-h-screen flex bg-bg text-text flex-col">
-    <div v-if="!isOnline" class="bg-red-900 text-white text-center text-sm py-1 z-50">
-      You are currently offline. Playing downloaded videos only.
-    </div>
+    <!-- Animated Offline Banner -->
+    <Transition name="fade-slide">
+      <div v-if="!isOnline" class="bg-red-900 text-white text-center text-sm py-1 z-50">
+        You are currently offline. Playing downloaded videos only.
+      </div>
+    </Transition>
 
-    <div class="flex flex-1">
+    <div class="flex flex-1 overflow-hidden">
       <Sidebar :isOpen="isSidebarOpen" />
 
-      <div class="flex-1 flex flex-col min-h-screen transition-all duration-300" :class="isSidebarOpen ? 'ml-60' : 'ml-0'">
+      <div class="flex-1 flex flex-col min-h-screen transition-all duration-300 ease-in-out" :class="isSidebarOpen ? 'ml-60' : 'ml-0'">
         <header class="sticky top-0 z-30 bg-bg/95 backdrop-blur h-14 flex items-center px-4 border-b border-white/5 gap-4">
-          <button @click="isSidebarOpen = !isSidebarOpen" class="text-muted hover:text-white p-2">
+          <button @click="isSidebarOpen = !isSidebarOpen" class="text-muted hover:text-white p-2 transition-colors">
             <svg viewBox="0 0 24 24" class="w-6 h-6 fill-current"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
           </button>
 
@@ -57,17 +60,18 @@ function doSearch() {
               v-model="q"
               type="search"
               placeholder="Search to download or watch a video..."
-              class="w-full h-9 px-4 rounded-full bg-surface border border-white/10 focus:outline-none focus:border-white/30 text-sm"
+              class="w-full h-9 px-4 rounded-full bg-surface border border-white/10 focus:outline-none focus:border-white/30 text-sm transition-colors"
             />
           </form>
         </header>
 
-        <!-- 
-          CRITICAL FIX: If the route is 'playables', we remove the padding (p-6) 
-          so the games fill the entire screen.
-        -->
-        <main class="flex-1" :class="route.name === 'playables' ? '' : 'p-6'">
-          <RouterView />
+        <main class="flex-1 overflow-y-auto" :class="route.name === 'playables' ? '' : 'p-6'">
+          <!-- Page Transitions -->
+          <RouterView v-slot="{ Component }">
+            <Transition name="fade-slide" mode="out-in">
+              <component :is="Component" />
+            </Transition>
+          </RouterView>
         </main>
       </div>
     </div>
