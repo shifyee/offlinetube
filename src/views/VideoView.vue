@@ -14,7 +14,6 @@ const library = useLibraryStore()
 
 const video = ref(null)
 const upNext = ref([])
-const comments = ref([])
 const loading = ref(true)
 const error = ref(null)
 const showComments = ref(false)
@@ -26,7 +25,6 @@ const isLiked = ref(false)
 const isCopied = ref(false)
 
 const isOffline = computed(() => library.videos.some(v => v.id === route.params.id && v.status === 'complete'))
-const stream = computed(() => video.value?.formatStreams?.[0])
 const poster = computed(() => video.value ? (bestThumbnail(video.value)?.url || null) : null)
 
 async function load(id) {
@@ -34,7 +32,6 @@ async function load(id) {
   error.value = null
   video.value = null
   upNext.value = []
-  comments.value = []
   showComments.value = false
   isLiked.value = false
   isCopied.value = false
@@ -47,7 +44,7 @@ async function load(id) {
       title: localVideo.title,
       author: localVideo.author,
       authorId: localVideo.authorId,
-      authorAvatar: null,
+      authorAvatar: localVideo.authorAvatar,
       lengthSeconds: localVideo.lengthSeconds,
       description: localVideo.description || 'No description saved.',
       comments: localVideo.comments || [],
@@ -72,18 +69,8 @@ async function load(id) {
   }
 }
 
-async function loadComments() {
-  if (showComments.value) { showComments.value = false; return }
-  showComments.value = true
-  
-  if (isOffline.value) return 
-  
-  if (comments.value.length) return
-  try { 
-    const data = await api.comments(route.params.id)
-    comments.value = data || []
-  }
-  catch (e) { comments.value = [{ commentId: '_e', author: 'Error', content: String(e.message || e) }] }
+function toggleComments() {
+  showComments.value = !showComments.value
 }
 
 function toggleLike() {
@@ -98,6 +85,12 @@ async function shareVideo() {
     setTimeout(() => { isCopied.value = false }, 2000)
   } catch (err) {
     console.error('Failed to copy text: ', err)
+  }
+}
+
+const handleVideoEnded = () => {
+  if (isOffline.value && video.value) {
+    downloads.promptDelete(video.value.videoId, video.value.title, poster.value);
   }
 }
 
@@ -123,8 +116,9 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
             :video-id="isOffline ? null : route.params.id" 
             :offline-video-id="isOffline ? route.params.id : null" 
             :poster="poster" 
-            :next-video-id="upNext[0]?.videoId || upNext[0]?.id"
-            @next="$router.push(`/watch/${upNext[0]?.videoId || upNext[0]?.id}`)"
+            :up-next="upNext"
+            @next="(id) => $router.push(`/watch/${id}`)"
+            @video-ended="handleVideoEnded"
             />
           </div>
 
@@ -189,36 +183,22 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
           </div>
 
           <!-- Comments Toggle -->
-          <button @click="loadComments" class="mt-6 font-bold text-sm text-accent hover:text-red-400 transition-colors">
+          <button @click="toggleComments" class="mt-6 font-bold text-sm text-accent hover:text-red-400 transition-colors">
             {{ showComments ? 'Hide comments' : 'Show comments' }}
           </button>
 
           <!-- Comments List -->
           <Transition name="fade-slide">
             <div v-if="showComments" class="mt-4 space-y-4">
-              <div v-if="(!video.comments?.length && !comments.length)" class="text-muted text-sm">No comments saved.</div>
+              <div v-if="!video.comments?.length" class="text-muted text-sm">No comments available.</div>
               
-              <!-- Offline Comments -->
-              <template v-if="isOffline && video.comments?.length">
-                <div v-for="c in video.comments" :key="c.commentId" class="flex gap-3">
-                  <div class="w-10 h-10 rounded-full bg-surface-2 flex items-center justify-center font-bold text-muted shrink-0">{{ c.author.charAt(0) }}</div>
-                  <div>
-                    <div class="text-sm font-bold">{{ c.author }}</div>
-                    <div class="text-sm text-gray-300 mt-1 whitespace-pre-wrap">{{ c.content }}</div>
-                  </div>
+              <div v-for="c in video.comments" :key="c.commentId" class="flex gap-3">
+                <img :src="c.authorAvatar || 'https://ui-avatars.com/api/?name='+encodeURIComponent(c.author)+'&background=282828&color=fff'" class="w-10 h-10 rounded-full shrink-0 object-cover" />
+                <div>
+                  <div class="text-sm font-bold">{{ c.author }}</div>
+                  <div class="text-sm text-gray-300 mt-1 whitespace-pre-wrap">{{ c.content }}</div>
                 </div>
-              </template>
-
-              <!-- Online Comments -->
-              <template v-else-if="!isOffline">
-                <div v-for="c in comments" :key="c.commentId" class="flex gap-3">
-                  <div class="w-10 h-10 rounded-full bg-surface-2 flex items-center justify-center font-bold text-muted shrink-0">{{ c.author.charAt(0) }}</div>
-                  <div>
-                    <div class="text-sm font-bold">{{ c.author }}</div>
-                    <div class="text-sm text-gray-300 mt-1 whitespace-pre-wrap">{{ c.content }}</div>
-                  </div>
-                </div>
-              </template>
+              </div>
             </div>
           </Transition>
         </div>
