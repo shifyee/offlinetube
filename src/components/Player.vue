@@ -468,7 +468,7 @@ video { width: 100%; height: 100%; object-fit: contain; }
 .yt-fade-enter-from, .yt-fade-leave-to { opacity: 0; }
 
 /* Smooth Next Video Fade */
-.fade-slow-enter-active { transition: opacity 1.5s ease-in-out; }
+.fade-slow-enter-active { transition: opacity 0.5s ease-in-out; }
 .fade-slow-leave-active { transition: opacity 0.5s ease-in-out; }
 .fade-slow-enter-from, .fade-slow-leave-to { opacity: 0; }
 </style>
