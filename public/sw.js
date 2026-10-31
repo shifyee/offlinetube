@@ -1,4 +1,4 @@
-const CACHE_NAME = 'offlinetube-thumbnails-v2';
+const CACHE_NAME = 'offlinetube-thumbnails-v3';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -11,11 +11,11 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Catch YouTube, Google User Content (avatars), and Piped proxies
   const isThumbnail = 
     url.hostname.includes('ytimg.com') || 
     url.hostname.includes('img.youtube.com') ||
     url.hostname.includes('ggpht.com') ||
+    url.hostname.includes('placehold.co') ||
     url.pathname.includes('/proxy/') ||
     url.pathname.includes('/thumbnails/');
 
@@ -24,7 +24,7 @@ self.addEventListener('fetch', (event) => {
       caches.open(CACHE_NAME).then((cache) => {
         return cache.match(event.request).then((cachedResponse) => {
           if (cachedResponse) {
-            return cachedResponse; // Return instantly offline
+            return cachedResponse; // Return instantly from cache
           }
           
           return fetch(event.request).then((networkResponse) => {
@@ -33,10 +33,13 @@ self.addEventListener('fetch', (event) => {
             }
             return networkResponse;
           }).catch(() => {
-            // If offline and not cached, return a transparent 1x1 pixel 
-            // (The Vue @error handler will immediately replace it with the sleek SVG)
-            const transparentPixel = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-            return new Response(transparentPixel, { headers: { 'Content-Type': 'image/gif' } });
+            // OFFLINE & NOT CACHED: Return a professional dark SVG placeholder
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9" style="background:#1a1a1a;width:100%;height:100%;display:block;">
+              <rect width="16" height="9" fill="#1a1a1a"/>
+              <circle cx="8" cy="4.5" r="1.5" fill="#2a2a2a"/>
+              <path d="M7.5 3.5L9.5 4.5L7.5 5.5V3.5Z" fill="#666"/>
+            </svg>`;
+            return new Response(svg, { headers: { 'Content-Type': 'image/svg+xml' } });
           });
         });
       })
