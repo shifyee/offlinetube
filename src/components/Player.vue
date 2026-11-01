@@ -3,7 +3,6 @@ import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import shaka from 'shaka-player/dist/shaka-player.compiled.js'
 import { db } from '../db'
-import { bestThumbnail, formatDuration } from '../api/piped-client'
 
 const props = defineProps({
   videoId: { type: String, default: null },
@@ -29,7 +28,7 @@ const useIframe = computed(() => props.videoId && !props.offlineVideoId)
 
 // --- State ---
 const isPaused = ref(true)
-const isPlaying = computed(() => !isPaused.value && !showEndScreen.value)
+const isPlaying = computed(() => !isPaused.value)
 const volumeLevel = ref('high')
 const currentTime = ref('0:00')
 const totalTime = ref('0:00')
@@ -40,13 +39,13 @@ const progressPosition = ref(0)
 const previewPosition = ref(0)
 const showControls = ref(true)
 
+// Settings Menu State
 const showSettings = ref(false)
 const skipDuration = ref(5)
-const sleepTimerOption = ref(0)
+const sleepTimerOption = ref(0) // 0 = off, 15, 30, 60
+const autoplay = ref(true) // NEW: Moved to settings
 
-const showEndScreen = ref(false)
-const autoplay = ref(true)
-
+// Feedback Animation State
 const feedbackAnim = ref(null) 
 const animKey = ref(0)
 let animTimeout = null
@@ -58,8 +57,11 @@ const triggerFeedback = (type) => {
   animTimeout = setTimeout(() => { feedbackAnim.value = null }, 600)
 }
 
+// Next Video Overlay
+const showNextOverlay = ref(false)
+
+// --- Control Visibility Logic ---
 const resetControlsTimer = () => {
-  if (showEndScreen.value) return
   showControls.value = true
   clearTimeout(hideControlsTimeout)
   
@@ -79,6 +81,7 @@ const handleMouseLeave = () => {
   }
 }
 
+// --- Shaka Setup ---
 async function setupPlayer() {
   if (useIframe.value) return
   if (!videoEl.value) return
@@ -96,7 +99,6 @@ async function setupPlayer() {
       const blob = await assembleBlob(props.offlineVideoId)
       objectUrl = URL.createObjectURL(blob)
       
-      // NEW: Handle MP3 vs MP4
       const mimeType = savedVideo?.format === 'mp3' ? 'audio/mpeg' : 'video/mp4'
       await player.load(objectUrl, undefined, mimeType)
     } catch (e) {
@@ -105,6 +107,7 @@ async function setupPlayer() {
   }
 }
 
+// --- Helpers ---
 const formatTime = (time) => {
   const minutes = Math.floor(time / 60)
   const seconds = Math.floor(time % 60)
@@ -124,7 +127,7 @@ const skip = (seconds) => {
 }
 
 const togglePlayPause = () => {
-  if (!videoEl.value || showEndScreen.value) return
+  if (!videoEl.value) return
   if (videoEl.value.paused) {
     videoEl.value.play()
     triggerFeedback('play')
@@ -182,8 +185,9 @@ const toggleFullScreen = () => {
 
 const goBack = () => { router.back() }
 
+// --- Timeline Logic ---
 const handleTimelineUpdate = (e) => {
-  if (!timelineContainerEl.value || !videoEl.value || showEndScreen.value) return
+  if (!timelineContainerEl.value || !videoEl.value) return
   const { left, width } = timelineContainerEl.value.getBoundingClientRect()
   const percent = Math.min(1, Math.max(0, (e.clientX - left) / width))
   previewPosition.value = percent
@@ -195,7 +199,7 @@ const handleTimelineUpdate = (e) => {
 }
 
 const toggleScrubbing = (e) => {
-  if (!timelineContainerEl.value || !videoEl.value || showEndScreen.value) return
+  if (!timelineContainerEl.value || !videoEl.value) return
   const { left, width } = timelineContainerEl.value.getBoundingClientRect()
   const percent = Math.min(1, Math.max(0, (e.clientX - left) / width))
   
@@ -211,6 +215,7 @@ const toggleScrubbing = (e) => {
   handleTimelineUpdate(e)
 }
 
+// --- Video Events ---
 const onTimeUpdate = () => {
   if (!videoEl.value) return
   currentTime.value = formatTime(videoEl.value.currentTime)
@@ -237,7 +242,7 @@ const onLoadedMetadata = async () => {
 }
 
 const saveProgress = async () => {
-  if (!videoEl.value || videoEl.value.paused || isScrubbing.value || showEndScreen.value) return
+  if (!videoEl.value || videoEl.value.paused || isScrubbing.value) return
   const id = props.offlineVideoId || props.videoId
   if (!id) return
   try {
@@ -252,21 +257,35 @@ const onVolumeChange = () => {
   else volumeLevel.value = 'high'
 }
 
+// --- End of Video Logic ---
 const onEnded = () => {
   isPaused.value = true
-  showEndScreen.value = true
-  showControls.value = false
-  emit('video-ended')
+  clearTimeout(hideControlsTimeout)
+  showControls.value = true
+  
+  if (autoplay.value && props.upNext && props.upNext.length > 0) {
+    const nextId = props.upNext[0]?.videoId || props.upNext[0]?.id;
+    if (nextId) {
+      showNextOverlay.value = true 
+      setTimeout(() => { emit('next', nextId) }, 500) 
+    }
+  } else {
+    // Just show the delete toast if it's offline
+    emit('video-ended')
+  }
 }
 
 const handleNext = () => {
   const nextId = props.upNext?.[0]?.videoId || props.upNext?.[0]?.id;
   if (!nextId) return;
-  emit('next', nextId);
+  videoEl.value?.pause()
+  showNextOverlay.value = true 
+  setTimeout(() => { emit('next', nextId) }, 500) 
 }
 
+// --- Keyboard Shortcuts ---
 const handleKeydown = (e) => {
-  if (useIframe.value || showEndScreen.value) return
+  if (useIframe.value) return
   const tagName = document.activeElement.tagName.toLowerCase()
   if (tagName === "input" || tagName === "textarea") return
 
@@ -274,7 +293,7 @@ const handleKeydown = (e) => {
   switch (key) {
     case " ": case "k": 
       if (tagName === "button") return; 
-      e.preventDefault();
+      e.preventDefault(); 
       togglePlayPause(); 
       break
     case "f": e.preventDefault(); toggleFullScreen(); break
@@ -291,7 +310,7 @@ const handleKeydown = (e) => {
       if (videoEl.value) { videoEl.value.volume = Math.max(0, videoEl.value.volume - 0.1); triggerFeedback('volume'); }
       break;
   }
-  resetControlsTimer()
+  resetControlsTimer() 
 }
 
 onMounted(() => {
@@ -355,6 +374,7 @@ onBeforeUnmount(() => {
         @ended="onEnded"
       ></video>
 
+      <!-- CENTER ANIMATIONS -->
       <transition name="yt-fade">
         <div v-if="feedbackAnim" :key="animKey" class="center-anim-overlay">
           <div class="anim-icon-bg">
@@ -373,9 +393,14 @@ onBeforeUnmount(() => {
         </div>
       </transition>
 
+      <transition name="fade-slow">
+        <div v-if="showNextOverlay" class="absolute inset-0 bg-black z-50 flex items-center justify-center pointer-events-none"></div>
+      </transition>
+
+      <!-- CONTROLS OVERLAY -->
       <div 
         class="video-controls-container transition-opacity duration-300" 
-        :class="showControls && !showEndScreen ? 'opacity-100' : 'opacity-0 pointer-events-none'"
+        :class="showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'"
       >
         <div class="timeline-container" 
              ref="timelineContainerEl"
@@ -412,13 +437,27 @@ onBeforeUnmount(() => {
             <span class="total-time">{{ totalTime }}</span>
           </div>
 
+          <!-- Settings Gear -->
           <div class="relative flex items-center">
             <button @click="showSettings = !showSettings" class="hover:text-red-500 transition-colors p-1" title="Settings">
               <svg viewBox="0 0 24 24" class="w-6 h-6 fill-current"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
             </button>
             
             <div v-if="showSettings" class="absolute bottom-10 right-0 bg-[#212121] border border-white/10 rounded-lg shadow-xl py-2 w-64 z-50 text-sm text-white">
-              <div class="px-4 py-2 font-bold text-xs text-muted uppercase">Playback Speed</div>
+              
+              <!-- Autoplay Toggle -->
+              <div class="flex items-center justify-between px-4 py-2 mb-1">
+                <span class="font-medium">Autoplay Next</span>
+                <button 
+                  @click="autoplay = !autoplay" 
+                  class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors"
+                  :class="autoplay ? 'bg-accent' : 'bg-white/20'"
+                >
+                  <span class="inline-block h-3 w-3 transform rounded-full bg-white transition-transform" :class="autoplay ? 'translate-x-5' : 'translate-x-1'" />
+                </button>
+              </div>
+
+              <div class="px-4 py-2 font-bold text-xs text-muted uppercase border-t border-white/10">Playback Speed</div>
               <div class="grid grid-cols-4 gap-1 px-2 mb-2">
                 <button v-for="speed in [0.5, 0.75, 1, 1.25, 1.5, 2]" :key="speed" @click="changeSpeed(speed)" class="py-1 rounded hover:bg-white/10" :class="{'bg-white/20': playbackRate === speed}">
                   {{ speed }}x
@@ -447,26 +486,6 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </div>
-
-      <div v-if="showEndScreen" class="absolute inset-0 bg-black/95 z-40 flex flex-col p-6 overflow-y-auto w-full h-full">
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="text-xl font-bold text-white">Up Next</h2>
-          <label class="flex items-center gap-2 text-white text-sm cursor-pointer">
-            <input type="checkbox" v-model="autoplay" class="w-4 h-4 accent-red-600" />
-            Autoplay
-          </label>
-        </div>
-        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          <RouterLink v-for="v in upNext" :key="v.videoId || v.id" :to="`/watch/${v.videoId || v.id}`" class="group cursor-pointer">
-            <div class="aspect-video bg-surface rounded-lg overflow-hidden relative">
-              <img :src="bestThumbnail(v)?.url || v.thumbnail" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-              <span class="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-1 rounded">{{ formatDuration(v.lengthSeconds) }}</span>
-            </div>
-            <h3 class="text-white text-sm font-bold mt-2 line-clamp-2 group-hover:text-red-400 transition-colors">{{ v.title }}</h3>
-            <p class="text-muted text-xs mt-1">{{ v.author }}</p>
-          </RouterLink>
-        </div>
-      </div>
     </template>
 
     <div v-if="error" class="absolute inset-0 flex items-center justify-center text-red-400 p-4 text-center bg-black/80 z-50">{{ error }}</div>
@@ -474,7 +493,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* Keep the exact same CSS from Phase 2 */
+/* Keep the same CSS */
 *, *::before, *::after { box-sizing: border-box; }
 .video-container { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; margin-inline: auto; background-color: black; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); }
 .video-container.full-screen { max-height: 100vh; }
@@ -512,4 +531,7 @@ video { width: 100%; height: 100%; object-fit: contain; }
 @keyframes popIn { 0% { transform: scale(0.8); opacity: 0; } 50% { transform: scale(1.05); opacity: 1; } 100% { transform: scale(1); opacity: 0; } }
 .yt-fade-enter-active, .yt-fade-leave-active { transition: opacity 0.2s ease; }
 .yt-fade-enter-from, .yt-fade-leave-to { opacity: 0; }
+.fade-slow-enter-active { transition: opacity 0.5s ease-in-out; }
+.fade-slow-leave-active { transition: opacity 0.5s ease-in-out; }
+.fade-slow-enter-from, .fade-slow-leave-to { opacity: 0; }
 </style>
