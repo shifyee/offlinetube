@@ -5,10 +5,15 @@ import { formatDuration } from '../api/piped-client'
 
 const playlists = usePlaylistStore()
 const newListName = ref('')
-const activeList = ref(null)
+const activeListId = ref(null) // Store the ID instead of the whole object
 
 onMounted(() => {
   playlists.refresh()
+})
+
+// Always get the freshest version of the active list from the store
+const activeList = computed(() => {
+  return playlists.lists.find(l => l.id === activeListId.value)
 })
 
 async function createList() {
@@ -20,7 +25,7 @@ async function createList() {
 async function deleteList(id) {
   if (!confirm('Delete this playlist?')) return
   await playlists.delete(id)
-  if (activeList.value?.id === id) activeList.value = null
+  if (activeListId.value === id) activeListId.value = null
 }
 
 const handleImageError = (e) => {
@@ -53,9 +58,9 @@ const handleImageError = (e) => {
         <button 
           v-for="list in playlists.lists" 
           :key="list.id"
-          @click="activeList = list"
+          @click="activeListId = list.id"
           class="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors text-left"
-          :class="activeList?.id === list.id ? 'bg-surface text-accent font-medium' : 'hover:bg-surface text-muted hover:text-white'"
+          :class="activeListId === list.id ? 'bg-surface text-accent font-medium' : 'hover:bg-surface text-muted hover:text-white'"
         >
           <span class="truncate">{{ list.name }}</span>
           <span class="text-xs bg-black/20 px-2 py-0.5 rounded-full">{{ list.videos.length }}</span>
