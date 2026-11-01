@@ -2,10 +2,12 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { RouterView, useRouter, useRoute } from 'vue-router'
 import { useLibraryStore } from './stores/library'
+import { useSettingsStore } from './stores/settings' // NEW
 import DownloadToasts from './components/DownloadToasts.vue'
 import Sidebar from './components/Sidebar.vue'
 
 const library = useLibraryStore()
+const settings = useSettingsStore() // NEW
 const router = useRouter()
 const route = useRoute()
 const q = ref('')
@@ -13,7 +15,9 @@ const isSidebarOpen = ref(true)
 const isOnline = ref(navigator.onLine)
 
 onMounted(() => {
+  settings.applyTheme() // Apply color and animation settings immediately
   library.refresh()
+  
   window.addEventListener('online', () => isOnline.value = true)
   window.addEventListener('offline', () => isOnline.value = false)
 })
@@ -39,7 +43,6 @@ function doSearch() {
 
 <template>
   <div class="min-h-screen flex bg-bg text-text flex-col">
-    <!-- Animated Offline Banner -->
     <Transition name="fade-slide">
       <div v-if="!isOnline" class="bg-red-900 text-white text-center text-sm py-1 z-50">
         You are currently offline. Playing downloaded videos only.
@@ -66,7 +69,6 @@ function doSearch() {
         </header>
 
         <main class="flex-1 overflow-y-auto" :class="route.name === 'playables' ? '' : 'p-6'">
-          <!-- Page Transitions -->
           <RouterView v-slot="{ Component }">
             <Transition name="fade-slide" mode="out-in">
               <component :is="Component" />
