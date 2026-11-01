@@ -10,7 +10,7 @@ import Player from '../components/Player.vue'
 import DownloadModal from '../components/DownloadModal.vue'
 
 const route = useRoute()
-const router = useRouter() // Added for redirect
+const router = useRouter() 
 const downloads = useDownloadsStore()
 const library = useLibraryStore()
 const history = useHistoryStore()
@@ -29,7 +29,6 @@ const isCopied = ref(false)
 const isOffline = computed(() => library.videos.some(v => v.id === route.params.id && v.status === 'complete'))
 const poster = computed(() => video.value ? (bestThumbnail(video.value)?.url || null) : null)
 
-// 1. Helper for generating a consistent color based on the name
 const getAvatarColor = (name) => {
   const colors = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#22c55e', '#06b6d4', '#3b82f6', '#6366f1', '#a855f7', '#ec4899']
   let hash = 0
@@ -67,7 +66,7 @@ async function load(id) {
     
     upNext.value = library.complete.filter(v => v.id !== id).slice(0, 10)
     loading.value = false
-    history.add(video.value)
+    // Removed history.add() from here
     return
   }
 
@@ -76,7 +75,7 @@ async function load(id) {
     if (video.value.related && video.value.related.length > 0) {
       upNext.value = video.value.related.filter(v => v.videoId !== id).slice(0, 8)
     }
-    history.add(video.value)
+    // Removed history.add() from here
   } catch (e) {
     error.value = String(e.message || e)
   } finally {
@@ -84,13 +83,8 @@ async function load(id) {
   }
 }
 
-function toggleComments() {
-  showComments.value = !showComments.value
-}
-
-function toggleLike() {
-  isLiked.value = !isLiked.value
-}
+function toggleComments() { showComments.value = !showComments.value }
+function toggleLike() { isLiked.value = !isLiked.value }
 
 async function shareVideo() {
   try {
@@ -109,10 +103,9 @@ const handleVideoEnded = () => {
   }
 }
 
-// 2. Auto-redirect if the offline video gets deleted
 watch(() => library.videos, (newVideos) => {
   if (isOffline.value && !newVideos.some(v => v.id === route.params.id)) {
-    router.push('/') // Go back home smoothly
+    router.push('/') 
   }
 }, { deep: true });
 
@@ -134,13 +127,15 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
 
         <div v-else-if="video">
           <div class="aspect-video bg-black rounded-xl overflow-hidden shadow-lg">
+            <!-- Added @watched event listener -->
             <Player 
-            :video-id="isOffline ? null : route.params.id" 
-            :offline-video-id="isOffline ? route.params.id : null" 
-            :poster="poster" 
-            :up-next="upNext"
-            @next="(id) => $router.push(`/watch/${id}`)"
-            @video-ended="handleVideoEnded"
+              :video-id="isOffline ? null : route.params.id" 
+              :offline-video-id="isOffline ? route.params.id : null" 
+              :poster="poster" 
+              :up-next="upNext"
+              @next="(id) => $router.push(`/watch/${id}`)"
+              @video-ended="handleVideoEnded"
+              @watched="history.add(video)"
             />
           </div>
 
@@ -205,12 +200,10 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
             {{ showComments ? 'Hide comments' : 'Show comments' }}
           </button>
 
-          <!-- Comments List -->
           <Transition name="fade-slide">
             <div v-if="showComments" class="mt-4 space-y-4">
               <div v-if="!video.comments?.length" class="text-muted text-sm">No comments available.</div>
               
-              <!-- 3. Updated Comments with CSS Avatars -->
               <div v-for="c in video.comments" :key="c.commentId" class="flex gap-3">
                 <div 
                   class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shrink-0 text-sm"
