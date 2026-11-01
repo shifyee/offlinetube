@@ -1,18 +1,19 @@
 <script setup>
 import { ref, onMounted, watch, computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { api, bestThumbnail, formatDuration, formatBytes } from '../api/piped-client'
 import { useDownloadsStore } from '../stores/downloads'
 import { useLibraryStore } from '../stores/library'
-import { useHistoryStore } from '../stores/history' // NEW
+import { useHistoryStore } from '../stores/history'
 import { db } from '../db'
 import Player from '../components/Player.vue'
 import DownloadModal from '../components/DownloadModal.vue'
 
 const route = useRoute()
+const router = useRouter() // Added for redirect
 const downloads = useDownloadsStore()
 const library = useLibraryStore()
-const history = useHistoryStore() // NEW
+const history = useHistoryStore()
 
 const video = ref(null)
 const upNext = ref([])
@@ -22,12 +23,22 @@ const showComments = ref(false)
 const showModal = ref(false)
 const isExpanded = ref(false)
 
-// Interaction states
 const isLiked = ref(false)
 const isCopied = ref(false)
 
 const isOffline = computed(() => library.videos.some(v => v.id === route.params.id && v.status === 'complete'))
 const poster = computed(() => video.value ? (bestThumbnail(video.value)?.url || null) : null)
+
+// 1. Helper for generating a consistent color based on the name
+const getAvatarColor = (name) => {
+  const colors = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#22c55e', '#06b6d4', '#3b82f6', '#6366f1', '#a855f7', '#ec4899']
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  const index = Math.abs(hash) % colors.length
+  return colors[index]
+}
 
 async function load(id) {
   loading.value = true
@@ -56,7 +67,6 @@ async function load(id) {
     
     upNext.value = library.complete.filter(v => v.id !== id).slice(0, 10)
     loading.value = false
-    // Log to history
     history.add(video.value)
     return
   }
@@ -66,7 +76,6 @@ async function load(id) {
     if (video.value.related && video.value.related.length > 0) {
       upNext.value = video.value.related.filter(v => v.videoId !== id).slice(0, 8)
     }
-    // Log to history
     history.add(video.value)
   } catch (e) {
     error.value = String(e.message || e)
@@ -99,6 +108,13 @@ const handleVideoEnded = () => {
     downloads.promptDelete(video.value.videoId, video.value.title, poster.value);
   }
 }
+
+// 2. Auto-redirect if the offline video gets deleted
+watch(() => library.videos, (newVideos) => {
+  if (isOffline.value && !newVideos.some(v => v.id === route.params.id)) {
+    router.push('/') // Go back home smoothly
+  }
+}, { deep: true });
 
 onMounted(() => {
   library.refresh().then(() => load(route.params.id))
@@ -143,7 +159,6 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
             </div>
 
             <div class="flex items-center gap-2">
-              <!-- Like / Dislike -->
               <div class="flex items-center bg-surface rounded-full overflow-hidden border border-white/10">
                 <button 
                   @click="toggleLike"
@@ -160,7 +175,6 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
                 </button>
               </div>
               
-              <!-- Share -->
               <button 
                 @click="shareVideo"
                 class="flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-300 border"
@@ -178,7 +192,6 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
             </div>
           </div>
 
-          <!-- Description -->
           <div class="mt-4 bg-surface rounded-xl p-4 text-sm cursor-pointer hover:bg-surface-2 transition-all duration-300" @click="isExpanded = !isExpanded">
             <div class="font-bold text-xs text-muted mb-1">
               {{ video.lengthSeconds ? formatDuration(video.lengthSeconds) : 'Unknown length' }} · {{ isOffline ? 'Offline Library' : 'Streamed on ' + new Date().toLocaleDateString() }}
@@ -188,7 +201,6 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
             </div>
           </div>
 
-          <!-- Comments Toggle -->
           <button @click="toggleComments" class="mt-6 font-bold text-sm text-accent hover:text-red-400 transition-colors">
             {{ showComments ? 'Hide comments' : 'Show comments' }}
           </button>
@@ -198,8 +210,14 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
             <div v-if="showComments" class="mt-4 space-y-4">
               <div v-if="!video.comments?.length" class="text-muted text-sm">No comments available.</div>
               
+              <!-- 3. Updated Comments with CSS Avatars -->
               <div v-for="c in video.comments" :key="c.commentId" class="flex gap-3">
-                <img :src="c.authorAvatar || 'https://ui-avatars.com/api/?name='+encodeURIComponent(c.author)+'&background=282828&color=fff'" class="w-10 h-10 rounded-full shrink-0 object-cover" />
+                <div 
+                  class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shrink-0 text-sm"
+                  :style="{ backgroundColor: getAvatarColor(c.author || '?') }"
+                >
+                  {{ (c.author || '?').charAt(0).toUpperCase() }}
+                </div>
                 <div>
                   <div class="text-sm font-bold">{{ c.author }}</div>
                   <div class="text-sm text-gray-300 mt-1 whitespace-pre-wrap">{{ c.content }}</div>
@@ -211,7 +229,6 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
       </Transition>
     </div>
 
-    <!-- Up Next Sidebar -->
     <Transition name="fade-slide">
       <div v-if="video" class="w-96 shrink-0 hidden lg:block">
         <h2 class="font-bold text-lg mb-4">{{ isOffline ? 'Up Next (Offline)' : 'Up Next' }}</h2>
