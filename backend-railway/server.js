@@ -12,7 +12,6 @@ app.use(express.json());
 const COOKIES_FILE = '/tmp/cookies.txt';
 const jobs = new Map();
 
-// Force CORS headers
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -153,29 +152,33 @@ app.get('/api/info', async (req, res) => {
 
 // --- DOWNLOAD ENDPOINT ---
 app.post('/api/download', async (req, res) => {
-  const { id, height } = req.body;
+  const { id, height, format } = req.body;
   if (!id) return res.status(400).json({ error: 'Missing video ID' });
 
   const jobId = crypto.randomBytes(8).toString('hex');
-  const tempFile = path.join('/tmp', `ytdl-${jobId}.mp4`);
+  const isMp3 = format === 'mp3';
+  const ext = isMp3 ? 'mp3' : 'mp4';
+  const tempFile = path.join('/tmp', `ytdl-${jobId}.${ext}`);
   const url = `https://www.youtube.com/watch?v=${id}`;
   
   let h = parseInt(height, 10);
   if (isNaN(h) || h <= 0) h = 1080;
 
-  const formatStr = `bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/b`;
-  
-  jobs.set(jobId, { status: 'downloading', progress: 0, file: tempFile, createdAt: Date.now() });
-  console.log(`[Job ${jobId}] Starting download: ${id} @ ${h}p`);
+  jobs.set(jobId, { status: 'downloading', progress: 0, file: tempFile, createdAt: Date.now(), format: ext });
+  console.log(`[Job ${jobId}] Starting download: ${id} @ ${isMp3 ? 'MP3' : h + 'p'}`);
 
-  const args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url], false);
+  let args = [];
+  if (isMp3) {
+    args = buildYtDlpArgs(['-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', tempFile, url], false);
+  } else {
+    const formatStr = `bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/b`;
+    args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url], false);
+  }
   
-  // DETACHED: TRUE is required so we can kill the entire process tree on timeout
   const child = spawn('yt-dlp', args, { detached: true });
 
   let lastProgressTime = Date.now();
   const stallChecker = setInterval(() => {
-    // 60 second timeout instead of 120
     if (Date.now() - lastProgressTime > 60000) {
       console.error(`[Job ${jobId}] Stalled for 60s, killing process.`);
       try { process.kill(-child.pid, 'SIGKILL'); } catch (e) { child.kill('SIGKILL'); }
@@ -185,7 +188,6 @@ app.post('/api/download', async (req, res) => {
     }
   }, 5000);
 
-  // Listen to BOTH stdout and stderr because yt-dlp sometimes swaps them
   const handleOutput = (data) => {
     const text = data.toString();
     const match = /\[download\]\s+([\d.]+)%/.exec(text);
@@ -194,7 +196,6 @@ app.post('/api/download', async (req, res) => {
       const job = jobs.get(jobId);
       if (job) job.progress = parseFloat(match[1]) / 100;
     }
-    // Log actual yt-dlp errors immediately
     if (text.includes('ERROR:')) {
       console.error(`[Job ${jobId}] ${text.trim()}`);
     }
@@ -203,7 +204,6 @@ app.post('/api/download', async (req, res) => {
   child.stdout.on('data', handleOutput);
   child.stderr.on('data', handleOutput);
 
-  // Catch spawn errors (e.g. if yt-dlp binary is missing)
   child.on('error', (err) => {
     clearInterval(stallChecker);
     console.error(`[Job ${jobId}] Spawn error:`, err);
@@ -239,7 +239,10 @@ app.get('/api/file/:jobId', (req, res) => {
   if (!job || job.status !== 'done' || !fs.existsSync(job.file)) {
     return res.status(404).send('File not ready');
   }
-  res.setHeader('Content-Type', 'video/mp4');
+  
+  const isMp3 = job.format === 'mp3';
+  res.setHeader('Content-Type', isMp3 ? 'audio/mpeg' : 'video/mp4');
+  
   const stream = fs.createReadStream(job.file);
   stream.pipe(res);
   stream.on('end', () => {
