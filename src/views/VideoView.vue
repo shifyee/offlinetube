@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { api, bestThumbnail, formatDuration, formatBytes } from '../api/piped-client'
 import { useDownloadsStore } from '../stores/downloads'
 import { useLibraryStore } from '../stores/library'
+import { useHistoryStore } from '../stores/history' // NEW
 import { db } from '../db'
 import Player from '../components/Player.vue'
 import DownloadModal from '../components/DownloadModal.vue'
@@ -11,6 +12,7 @@ import DownloadModal from '../components/DownloadModal.vue'
 const route = useRoute()
 const downloads = useDownloadsStore()
 const library = useLibraryStore()
+const history = useHistoryStore() // NEW
 
 const video = ref(null)
 const upNext = ref([])
@@ -54,6 +56,8 @@ async function load(id) {
     
     upNext.value = library.complete.filter(v => v.id !== id).slice(0, 10)
     loading.value = false
+    // Log to history
+    history.add(video.value)
     return
   }
 
@@ -62,6 +66,8 @@ async function load(id) {
     if (video.value.related && video.value.related.length > 0) {
       upNext.value = video.value.related.filter(v => v.videoId !== id).slice(0, 8)
     }
+    // Log to history
+    history.add(video.value)
   } catch (e) {
     error.value = String(e.message || e)
   } finally {
