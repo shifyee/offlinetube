@@ -1,10 +1,14 @@
 import Dexie from 'dexie'
 
+// Kept the exact same database name so your old videos are preserved
 export const db = new Dexie('offline-tube')
 
-db.version(2).stores({
+// Bumped to version 3 to add history and playlists
+db.version(3).stores({
   videos: 'id, title, author, status, downloadedAt, addedAt',
-  chunks: '++id, videoId, seq, [videoId+seq]'
+  chunks: '++id, videoId, seq, [videoId+seq]',
+  history: '++id, videoId, watchedAt', // NEW
+  playlists: '++id, name, createdAt'    // NEW
 })
 
 export async function assembleBlob(videoId) {
@@ -18,12 +22,14 @@ export async function clearChunks(videoId) {
 }
 
 export async function deleteVideo(id) {
+  // Restored your transaction logic
   await db.transaction('rw', db.videos, db.chunks, async () => {
     await db.chunks.where('videoId').equals(id).delete()
     await db.videos.delete(id)
   })
 }
-// Register the Service Worker for offline thumbnails
+
+// Restored the Service Worker registration
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').then((registration) => {
