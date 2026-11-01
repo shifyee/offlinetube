@@ -1,10 +1,15 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useLibraryStore } from '../stores/library'
+import { usePlaylistStore } from '../stores/playlists' // NEW
 import { formatBytes } from '../api/piped-client'
 
 const library = useLibraryStore()
+const playlists = usePlaylistStore() // NEW
 const storageStats = ref({ usage: 0, quota: 0 })
+
+// Playlist dropdown state
+const openPlaylistMenu = ref(null)
 
 async function updateStorage() {
   if (navigator.storage && navigator.storage.estimate) {
@@ -20,26 +25,23 @@ async function updateStorage() {
   }
 }
 
-// Fallback logic: Try hqdefault -> Then show dark SVG
 const handleImageError = (e) => {
-  // If the thumbnail fails, try swapping mqdefault for hqdefault
   if (e.target.src.includes('mqdefault')) {
     e.target.src = e.target.src.replace('mqdefault', 'hqdefault');
     return;
   }
-  
-  // If that fails too, show the dark SVG placeholder
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9" style="background:#1a1a1a;width:100%;height:100%;display:block;">
     <rect width="16" height="9" fill="#1a1a1a"/>
     <circle cx="8" cy="4.5" r="1.5" fill="#2a2a2a"/>
     <path d="M7.5 3.5L9.5 4.5L7.5 5.5V3.5Z" fill="#666"/>
   </svg>`;
   e.target.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-  e.target.onerror = null; // Prevent infinite loop
+  e.target.onerror = null;
 }
 
 onMounted(() => {
   library.refresh().then(updateStorage)
+  playlists.refresh()
 })
 
 async function remove(id) {
@@ -49,12 +51,17 @@ async function remove(id) {
   }
 }
 
+async function addToPlaylist(playlistId, video) {
+  await playlists.addVideo(playlistId, video)
+  openPlaylistMenu.value = null
+}
+
 let interval = setInterval(updateStorage, 5000)
 onUnmounted(() => clearInterval(interval))
 </script>
 
 <template>
-  <div class="max-w-7xl mx-auto px-3 py-4">
+  <div class="max-w-7xl mx-auto px-3 py-4" @click="openPlaylistMenu = null">
     <!-- Storage Tracker Bar -->
     <div v-if="storageStats.quota > 0" class="mb-6">
       <div class="flex items-center justify-between mb-1">
@@ -87,12 +94,10 @@ onUnmounted(() => clearInterval(interval))
       <div 
         v-for="v in library.complete" 
         :key="v.id" 
-        class="group bg-surface rounded-xl overflow-hidden border border-white/5 transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_10px_40px_rgba(255,0,51,0.15)]"
+        class="group bg-surface rounded-xl overflow-hidden border border-white/5 transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_10px_40px_rgba(255,0,51,0.15)] relative"
       >
         <RouterLink :to="`/watch/${v.id}`">
-          <!-- Changed to relative for the progress bar overlay -->
           <div class="aspect-video bg-surface-2 overflow-hidden relative">
-            <!-- Removed crossorigin="anonymous" -->
             <img 
               v-if="v.thumbnail" 
               :src="v.thumbnail" 
@@ -122,6 +127,31 @@ onUnmounted(() => clearInterval(interval))
               @click="remove(v.id)"
               class="text-xs text-red-400 hover:text-red-300 transition-colors"
             >Delete</button>
+          </div>
+        </div>
+        
+        <!-- Playlist Add Button (Visible on Hover) -->
+        <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button 
+            @click.stop="openPlaylistMenu = openPlaylistMenu === v.id ? null : v.id"
+            class="bg-black/60 hover:bg-black/80 text-white p-1.5 rounded-full backdrop-blur-sm transition-colors"
+            title="Add to Playlist"
+          >
+            <svg viewBox="0 0 24 24" class="w-5 h-5 fill-current"><path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z"/></svg>
+          </button>
+          
+          <!-- Dropdown Menu -->
+          <div v-if="openPlaylistMenu === v.id" class="absolute top-full right-0 mt-2 w-48 bg-[#212121] border border-white/10 rounded-lg shadow-xl py-1 z-50">
+            <div class="px-3 py-2 text-xs font-bold text-muted uppercase border-b border-white/10 mb-1">Add to...</div>
+            <button 
+              v-for="list in playlists.lists" 
+              :key="list.id"
+              @click.stop="addToPlaylist(list.id, v)"
+              class="w-full text-left px-4 py-2 text-sm text-white hover:bg-white/10 transition-colors truncate"
+            >
+              {{ list.name }}
+            </button>
+            <div v-if="!playlists.lists.length" class="px-4 py-2 text-xs text-muted text-center">No playlists yet.</div>
           </div>
         </div>
       </div>
