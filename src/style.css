@@ -11,6 +11,8 @@ html, body, #app { height: 100%; }
 body {
   font-family: 'Roboto', system-ui, -apple-system, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
+  background-color: var(--bg);
+  color: var(--text);
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -26,13 +28,12 @@ body {
 }
 
 /* =========================================
-   GLOBAL ANIMATIONS (The Premium Feel)
+   GLOBAL ANIMATIONS
    ========================================= */
 
-/* Page Transitions (Fast & Snappy) */
 .fade-slide-enter-active,
 .fade-slide-leave-active {
-  transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .fade-slide-enter-from {
   opacity: 0;
@@ -43,7 +44,6 @@ body {
   transform: translateY(-5px);
 }
 
-/* Pop-up Transitions (Modals, Video Cards) */
 .scale-fade-enter-active,
 .scale-fade-leave-active {
   transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -51,10 +51,9 @@ body {
 .scale-fade-enter-from,
 .scale-fade-leave-to {
   opacity: 0;
-  transform: scale(0.99); /* Less extreme scale for a snappier feel */
+  transform: scale(0.96); 
 }
 
-/* Toast Notifications (Slide in from right) */
 .toast-enter-active,
 .toast-leave-active {
   transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); 
@@ -66,4 +65,10 @@ body {
 }
 .toast-move {
   transition: transform 0.3s ease;
+}
+
+/* THE KILL SWITCH: Instantly disables all animations if toggled off */
+.no-animations * {
+  transition: none !important;
+  animation: none !important;
 }
