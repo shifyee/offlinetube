@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import shaka from 'shaka-player/dist/shaka-player.compiled.js'
 import { db } from '../db'
@@ -40,16 +40,13 @@ const progressPosition = ref(0)
 const previewPosition = ref(0)
 const showControls = ref(true)
 
-// Settings Menu State
 const showSettings = ref(false)
 const skipDuration = ref(5)
-const sleepTimerOption = ref(0) // 0 = off, 15, 30, 60
+const sleepTimerOption = ref(0)
 
-// End Screen State
 const showEndScreen = ref(false)
 const autoplay = ref(true)
 
-// Feedback Animation State
 const feedbackAnim = ref(null) 
 const animKey = ref(0)
 let animTimeout = null
@@ -61,7 +58,6 @@ const triggerFeedback = (type) => {
   animTimeout = setTimeout(() => { feedbackAnim.value = null }, 600)
 }
 
-// --- Control Visibility Logic ---
 const resetControlsTimer = () => {
   if (showEndScreen.value) return
   showControls.value = true
@@ -70,7 +66,7 @@ const resetControlsTimer = () => {
   if (!isPaused.value) {
     hideControlsTimeout = setTimeout(() => {
       showControls.value = false
-      showSettings.value = false // Close settings when controls hide
+      showSettings.value = false
     }, 3000)
   }
 }
@@ -83,7 +79,6 @@ const handleMouseLeave = () => {
   }
 }
 
-// --- Shaka Setup ---
 async function setupPlayer() {
   if (useIframe.value) return
   if (!videoEl.value) return
@@ -97,16 +92,19 @@ async function setupPlayer() {
   if (props.offlineVideoId) {
     try {
       const { assembleBlob } = await import('../db')
+      const savedVideo = await db.videos.get(props.offlineVideoId)
       const blob = await assembleBlob(props.offlineVideoId)
       objectUrl = URL.createObjectURL(blob)
-      await player.load(objectUrl, undefined, 'video/mp4')
+      
+      // NEW: Handle MP3 vs MP4
+      const mimeType = savedVideo?.format === 'mp3' ? 'audio/mpeg' : 'video/mp4'
+      await player.load(objectUrl, undefined, mimeType)
     } catch (e) {
       error.value = `Offline load failed: ${e.message}`
     }
   }
 }
 
-// --- Helpers ---
 const formatTime = (time) => {
   const minutes = Math.floor(time / 60)
   const seconds = Math.floor(time % 60)
@@ -184,12 +182,10 @@ const toggleFullScreen = () => {
 
 const goBack = () => { router.back() }
 
-// --- Timeline Logic ---
 const handleTimelineUpdate = (e) => {
   if (!timelineContainerEl.value || !videoEl.value || showEndScreen.value) return
   const { left, width } = timelineContainerEl.value.getBoundingClientRect()
   const percent = Math.min(1, Math.max(0, (e.clientX - left) / width))
-  
   previewPosition.value = percent
   if (isScrubbing.value) {
     e.preventDefault()
@@ -215,7 +211,6 @@ const toggleScrubbing = (e) => {
   handleTimelineUpdate(e)
 }
 
-// --- Video Events ---
 const onTimeUpdate = () => {
   if (!videoEl.value) return
   currentTime.value = formatTime(videoEl.value.currentTime)
@@ -270,7 +265,6 @@ const handleNext = () => {
   emit('next', nextId);
 }
 
-// --- Keyboard Shortcuts ---
 const handleKeydown = (e) => {
   if (useIframe.value || showEndScreen.value) return
   const tagName = document.activeElement.tagName.toLowerCase()
@@ -280,7 +274,7 @@ const handleKeydown = (e) => {
   switch (key) {
     case " ": case "k": 
       if (tagName === "button") return; 
-      e.preventDefault(); // Stop scroll
+      e.preventDefault();
       togglePlayPause(); 
       break
     case "f": e.preventDefault(); toggleFullScreen(); break
@@ -290,20 +284,14 @@ const handleKeydown = (e) => {
     case "arrowright": case "l": skip(skipDuration.value); break
     case "arrowup":
       e.preventDefault();
-      if (videoEl.value) {
-        videoEl.value.volume = Math.min(1, videoEl.value.volume + 0.1);
-        triggerFeedback('volume');
-      }
+      if (videoEl.value) { videoEl.value.volume = Math.min(1, videoEl.value.volume + 0.1); triggerFeedback('volume'); }
       break;
     case "arrowdown":
       e.preventDefault();
-      if (videoEl.value) {
-        videoEl.value.volume = Math.max(0, videoEl.value.volume - 0.1);
-        triggerFeedback('volume');
-      }
+      if (videoEl.value) { videoEl.value.volume = Math.max(0, videoEl.value.volume - 0.1); triggerFeedback('volume'); }
       break;
   }
-  resetControlsTimer() // Reset on ANY key press
+  resetControlsTimer()
 }
 
 onMounted(() => {
@@ -311,10 +299,7 @@ onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
   document.addEventListener('mouseup', (e) => { if (isScrubbing.value) toggleScrubbing(e) })
   document.addEventListener('mousemove', (e) => { if (isScrubbing.value) handleTimelineUpdate(e) })
-  document.addEventListener('fullscreenchange', () => { 
-    isFullscreen.value = !!document.fullscreenElement 
-    resetControlsTimer() 
-  })
+  document.addEventListener('fullscreenchange', () => { isFullscreen.value = !!document.fullscreenElement; resetControlsTimer() })
   resetControlsTimer()
 })
 
@@ -370,7 +355,6 @@ onBeforeUnmount(() => {
         @ended="onEnded"
       ></video>
 
-      <!-- CENTER ANIMATIONS -->
       <transition name="yt-fade">
         <div v-if="feedbackAnim" :key="animKey" class="center-anim-overlay">
           <div class="anim-icon-bg">
@@ -389,7 +373,6 @@ onBeforeUnmount(() => {
         </div>
       </transition>
 
-      <!-- CONTROLS OVERLAY -->
       <div 
         class="video-controls-container transition-opacity duration-300" 
         :class="showControls && !showEndScreen ? 'opacity-100' : 'opacity-0 pointer-events-none'"
@@ -429,13 +412,11 @@ onBeforeUnmount(() => {
             <span class="total-time">{{ totalTime }}</span>
           </div>
 
-          <!-- Settings Gear -->
           <div class="relative flex items-center">
             <button @click="showSettings = !showSettings" class="hover:text-red-500 transition-colors p-1" title="Settings">
               <svg viewBox="0 0 24 24" class="w-6 h-6 fill-current"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
             </button>
             
-            <!-- Popup Menu -->
             <div v-if="showSettings" class="absolute bottom-10 right-0 bg-[#212121] border border-white/10 rounded-lg shadow-xl py-2 w-64 z-50 text-sm text-white">
               <div class="px-4 py-2 font-bold text-xs text-muted uppercase">Playback Speed</div>
               <div class="grid grid-cols-4 gap-1 px-2 mb-2">
@@ -467,7 +448,6 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- END SCREEN GRID -->
       <div v-if="showEndScreen" class="absolute inset-0 bg-black/95 z-40 flex flex-col p-6 overflow-y-auto w-full h-full">
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-xl font-bold text-white">Up Next</h2>
@@ -494,15 +474,12 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* Base CSS */
+/* Keep the exact same CSS from Phase 2 */
 *, *::before, *::after { box-sizing: border-box; }
 .video-container { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; margin-inline: auto; background-color: black; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); }
 .video-container.full-screen { max-height: 100vh; }
-
-/* FIX: Hide cursor when controls are hidden */
 .hide-cursor { cursor: none !important; }
 .hide-cursor * { cursor: none !important; }
-
 video { width: 100%; height: 100%; object-fit: contain; }
 .video-controls-container { position: absolute; bottom: 0; left: 0; right: 0; color: white; z-index: 100; }
 .video-controls-container::before { content: ""; position: absolute; bottom: 0; background: linear-gradient(to top, rgba(0, 0, 0, .75), transparent); width: 100%; aspect-ratio: 6 / 1; z-index: -1; pointer-events: none; }
@@ -518,15 +495,15 @@ video { width: 100%; height: 100%; object-fit: contain; }
 .video-container[data-volume-level="low"] .volume-low-icon { display: block; }
 .video-container[data-volume-level="muted"] .volume-muted-icon { display: block; }
 .volume-container { display: flex; align-items: center; }
-.volume-slider { width: 0; transform-origin: left; transform: scaleX(0); transition: width 150ms ease-in-out, transform 150ms ease-in-out; accent-color: red; cursor: pointer; }
+.volume-slider { width: 0; transform-origin: left; transform: scaleX(0); transition: width 150ms ease-in-out, transform 150ms ease-in-out; accent-color: var(--accent, red); cursor: pointer; }
 .volume-container:hover .volume-slider, .volume-slider:focus-within { width: 100px; transform: scaleX(1); }
 .duration-container { display: flex; align-items: center; gap: .25rem; flex-grow: 1; }
 .video-controls-container .controls button.wide-btn { width: 50px; }
 .timeline-container { height: 7px; margin-inline: .5rem; cursor: pointer; display: flex; align-items: center; }
 .timeline { background-color: rgba(100, 100, 100, .5); height: 3px; width: 100%; position: relative }
 .timeline::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; right: calc(100% - var(--preview-position) * 100%); background-color: rgb(150, 150, 150); display: none; }
-.timeline::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; right: calc(100% - var(--progress-position) * 100%); background-color: red; }
-.timeline .thumb-indicator { --scale: 0; position: absolute; transform: translateX(-50%) scale(var(--scale)); height: 200%; top: -50%; left: calc(var(--progress-position) * 100%); background-color: red; border-radius: 50%; transition: transform 150ms ease-in-out; aspect-ratio: 1 / 1; }
+.timeline::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; right: calc(100% - var(--progress-position) * 100%); background-color: var(--accent, red); }
+.timeline .thumb-indicator { --scale: 0; position: absolute; transform: translateX(-50%) scale(var(--scale)); height: 200%; top: -50%; left: calc(var(--progress-position) * 100%); background-color: var(--accent, red); border-radius: 50%; transition: transform 150ms ease-in-out; aspect-ratio: 1 / 1; }
 .video-container.scrubbing .thumb-indicator, .timeline-container:hover .thumb-indicator { --scale: 1; }
 .video-container.scrubbing .timeline, .timeline-container:hover .timeline { height: 100%; }
 .next-btn { width: 36px !important; height: 36px !important; }
