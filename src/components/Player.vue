@@ -11,7 +11,7 @@ const props = defineProps({
   upNext: { type: Array, default: () => [] }
 })
 
-const emit = defineEmits(['next', 'video-ended'])
+const emit = defineEmits(['next', 'video-ended', 'watched']) // Added 'watched'
 const router = useRouter()
 
 const videoEl = ref(null)
@@ -42,8 +42,11 @@ const showControls = ref(true)
 // Settings Menu State
 const showSettings = ref(false)
 const skipDuration = ref(5)
-const sleepTimerOption = ref(0) // 0 = off, 15, 30, 60
-const autoplay = ref(true) // NEW: Moved to settings
+const sleepTimerOption = ref(0)
+const autoplay = ref(true)
+
+// History Tracking
+let hasLoggedHistory = false
 
 // Feedback Animation State
 const feedbackAnim = ref(null) 
@@ -57,7 +60,6 @@ const triggerFeedback = (type) => {
   animTimeout = setTimeout(() => { feedbackAnim.value = null }, 600)
 }
 
-// Next Video Overlay
 const showNextOverlay = ref(false)
 
 // --- Control Visibility Logic ---
@@ -220,11 +222,18 @@ const onTimeUpdate = () => {
   if (!videoEl.value) return
   currentTime.value = formatTime(videoEl.value.currentTime)
   progressPosition.value = videoEl.value.currentTime / videoEl.value.duration
+
+  // WATCH HISTORY DELAY: Only log if watched for 3 minutes (180s)
+  if (videoEl.value.currentTime >= 180 && !hasLoggedHistory) {
+    hasLoggedHistory = true
+    emit('watched')
+  }
 }
 
 const onLoadedMetadata = async () => {
   if (!videoEl.value) return
   totalTime.value = formatTime(videoEl.value.duration)
+  hasLoggedHistory = false // Reset history tracking for new video
   
   try {
     const savedVideo = await db.videos.get(props.offlineVideoId || props.videoId)
@@ -257,7 +266,6 @@ const onVolumeChange = () => {
   else volumeLevel.value = 'high'
 }
 
-// --- End of Video Logic ---
 const onEnded = () => {
   isPaused.value = true
   clearTimeout(hideControlsTimeout)
@@ -270,7 +278,6 @@ const onEnded = () => {
       setTimeout(() => { emit('next', nextId) }, 500) 
     }
   } else {
-    // Just show the delete toast if it's offline
     emit('video-ended')
   }
 }
@@ -443,9 +450,9 @@ onBeforeUnmount(() => {
               <svg viewBox="0 0 24 24" class="w-6 h-6 fill-current"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
             </button>
             
-            <div v-if="showSettings" class="absolute bottom-10 right-0 bg-[#212121] border border-white/10 rounded-lg shadow-xl py-2 w-64 z-50 text-sm text-white">
+            <!-- Fixed Settings Dropdown -->
+            <div v-if="showSettings" class="absolute bottom-full right-0 mb-3 bg-[#212121] border border-white/10 rounded-lg shadow-xl py-2 w-64 z-[100] text-sm text-white">
               
-              <!-- Autoplay Toggle -->
               <div class="flex items-center justify-between px-4 py-2 mb-1">
                 <span class="font-medium">Autoplay Next</span>
                 <button 
@@ -493,7 +500,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* Keep the same CSS */
+/* Keep the same CSS from Phase 2 */
 *, *::before, *::after { box-sizing: border-box; }
 .video-container { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; margin-inline: auto; background-color: black; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); }
 .video-container.full-screen { max-height: 100vh; }
