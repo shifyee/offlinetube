@@ -16,11 +16,11 @@ export const useDownloadsStore = defineStore('downloads', {
     isActive(id) {
       return !!this.active[id]
     },
-    async start(video, streamUrl) {
+    async start(video, streamUrl, format = 'mp4') {
       const id = video.videoId || video.id
       if (!id || this.active[id]) return
       
-      const match = streamUrl.match(/height=(\d+)/);
+      const match = streamUrl ? streamUrl.match(/height=(\d+)/) : null;
       const height = match ? parseInt(match[1], 10) : 1080;
 
       this.active[id] = {
@@ -35,7 +35,7 @@ export const useDownloadsStore = defineStore('downloads', {
         const res = await fetch(`${BACKEND}/api/download`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id, height })
+          body: JSON.stringify({ id, height, format })
         });
         const { jobId } = await res.json();
         if (!jobId) throw new Error('No job ID returned');
@@ -69,7 +69,8 @@ export const useDownloadsStore = defineStore('downloads', {
           thumbnail: this.active[id].thumbnail,
           authorAvatar: video.authorAvatar || null,
           description: video.description || '',
-          comments: video.comments || []
+          comments: video.comments || [],
+          format: format // Save format!
         }));
 
         await db.videos.put({
@@ -87,7 +88,7 @@ export const useDownloadsStore = defineStore('downloads', {
           parts.push(value);
         }
 
-        const blob = new Blob(parts, { type: 'video/mp4' });
+        const blob = new Blob(parts, { type: format === 'mp3' ? 'audio/mpeg' : 'video/mp4' });
         let seq = 0;
         for (let off = 0; off < blob.size; off += CHUNK_SIZE) {
           const slice = blob.slice(off, Math.min(off + CHUNK_SIZE, blob.size));
@@ -110,7 +111,6 @@ export const useDownloadsStore = defineStore('downloads', {
     cancel(id) {
       if (this.active[id]) delete this.active[id];
     },
-    // NEW: Delete Prompt Logic
     promptDelete(id, title, thumbnail) {
       this.active[id] = {
         id,
