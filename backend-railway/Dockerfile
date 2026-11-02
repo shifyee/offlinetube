@@ -10,19 +10,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Deno (Required for yt-dlp to solve YouTube signatures)
+# Install Deno (Required for yt-dlp JS challenges)
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
-# Install yt-dlp NIGHTLY binary (Updated daily to bypass YouTube's newest blocks)
+# Install yt-dlp nightly binary
 RUN curl -L https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp \
       -o /usr/local/bin/yt-dlp \
     && chmod +x /usr/local/bin/yt-dlp
 
-# Clone and build the POT provider (v2.0.2)
+# Clone and build the POT provider server
 RUN git clone --single-branch --branch 2.0.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /pot-provider \
     && cd /pot-provider/server \
     && npm install \
     && npx tsc
+
+# THE FIX: Install the yt-dlp plugin so it can talk to the POT server
+RUN mkdir -p /root/.config/yt-dlp/plugins \
+    && cp -r /pot-provider /root/.config/yt-dlp/plugins/
 
 WORKDIR /app
 
