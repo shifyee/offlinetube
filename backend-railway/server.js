@@ -65,8 +65,8 @@ function buildYtDlpArgs(args, fetchComments = false) {
     finalArgs.push('--cookies', COOKIES_FILE);
   }
 
-  // FORCE tv and mweb clients, they are much more resilient
-  let extractorArgs = 'youtube:player_client=tv,mweb;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  // SWITCHED TO android,ios - These are the most reliable clients to bypass YouTube blocks right now
+  let extractorArgs = 'youtube:player_client=android,ios;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
   finalArgs.push(
@@ -84,19 +84,24 @@ function runCommand(cmd, args, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { detached: true });
     let stdout = '';
-    let stderr = '';
+    
+    // THE FIX: We are now printing the logs so we can see them in Railway!
+    child.stdout.on('data', (data) => { stdout += data.toString(); });
+    child.stderr.on('data', (data) => { 
+      // This will print the debug logs to Railway
+      console.log(`[yt-dlp log] ${data.toString().trim()}`); 
+    });
+
     const timeout = setTimeout(() => {
       try { process.kill(-child.pid, 'SIGKILL'); } catch (e) {}
       reject(new Error('Command timed out'));
     }, timeoutMs);
 
-    child.stdout.on('data', (data) => { stdout += data.toString(); });
-    child.stderr.on('data', (data) => { stderr += data.toString(); });
     child.on('error', (err) => { clearTimeout(timeout); reject(err); });
     child.on('close', (code) => {
       clearTimeout(timeout);
       if (code === 0) resolve(stdout);
-      else reject(new Error(stderr || `Exited with code ${code}`));
+      else reject(new Error(`Exited with code ${code}`));
     });
   });
 }
@@ -108,8 +113,9 @@ app.get('/api/info', async (req, res) => {
   const url = `https://www.youtube.com/watch?v=${id}`;
   let stdout = null;
 
+  console.log(`[Server] Fetching info for ${id}...`);
+
   try {
-    // ADDED --verbose HERE to see exactly why formats are failing in the logs
     stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--verbose', '--ignore-no-formats-error', '--write-comments', '--dump-json', url], true), 25000);
   } catch (e) {
     try {
@@ -139,12 +145,14 @@ app.get('/api/info', async (req, res) => {
     const formats = [];
     const heights = new Map();
     
-    info.formats.forEach(f => {
-      if (f.height && f.vcodec !== 'none') {
-        const size = f.filesize || f.filesize_approx || 0;
-        if (!heights.has(f.height) || heights.get(f.height) < size) heights.set(f.height, size);
-      }
-    });
+    if (info.formats) {
+      info.formats.forEach(f => {
+        if (f.height && f.vcodec !== 'none') {
+          const size = f.filesize || f.filesize_approx || 0;
+          if (!heights.has(f.height) || heights.get(f.height) < size) heights.set(f.height, size);
+        }
+      });
+    }
     
     if (heights.size > 0) {
       Array.from(heights.entries()).sort((a, b) => b[0] - a[0]).forEach(([h, size]) => {
@@ -154,6 +162,8 @@ app.get('/api/info', async (req, res) => {
       });
     }
     
+    console.log(`[Server] Success! Found ${formats.length} formats for ${id}.`);
+    
     return res.json({
       videoId: id, title: info.title, author: info.uploader, authorId: '',
       authorAvatar: null, lengthSeconds: info.duration || 0, description: info.description || '',
@@ -161,6 +171,7 @@ app.get('/api/info', async (req, res) => {
       videoThumbnails: [{ url: info.thumbnail }], formatStreams: formats
     });
   } catch (error) {
+    console.error('[Server] Parse failed:', error.message);
     return res.status(500).json({ error: 'Failed to parse metadata.', details: error.message });
   }
 });
