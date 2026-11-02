@@ -62,7 +62,7 @@ function buildYtDlpArgs(args, fetchComments) {
   const finalArgs = [];
   if (fs.existsSync(COOKIES_FILE)) finalArgs.push('--cookies', COOKIES_FILE);
 
-  let extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  let extractorArgs = 'youtube:player_client=mweb;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
   finalArgs.push(
