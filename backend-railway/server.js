@@ -65,7 +65,7 @@ function buildYtDlpArgs(args, fetchComments = false) {
     finalArgs.push('--cookies', COOKIES_FILE);
   }
 
-  // FORCE tv and ios clients, they are much more resilient to blocks than web
+  // FORCE tv and ios clients, they are much more resilient to SABR blocks
   let extractorArgs = 'youtube:player_client=tv,ios;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
@@ -109,7 +109,7 @@ app.get('/api/info', async (req, res) => {
   let stdout = null;
 
   try {
-    // THE FIX: Replace '-f all' with '--ignore-no-formats-error'
+    // Use '--ignore-no-formats-error' to still get metadata if formats are missing
     stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--ignore-no-formats-error', '--write-comments', '--dump-json', url], true), 20000);
   } catch (e) {
     try {
