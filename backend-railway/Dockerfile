@@ -7,7 +7,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       python3 \
       git \
+      unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Deno (Required for yt-dlp to solve YouTube signatures)
+RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
 # Install yt-dlp NIGHTLY binary (Updated daily to bypass YouTube's newest blocks)
 RUN curl -L https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp \
@@ -30,6 +34,7 @@ COPY . .
 
 ENV PORT=8080
 ENV NODE_ENV=production
+ENV PATH="/root/.deno/bin:${PATH}"
 EXPOSE 8080
 
 # Start POT server, then Node server
