@@ -65,8 +65,8 @@ function buildYtDlpArgs(args, fetchComments = false) {
     finalArgs.push('--cookies', COOKIES_FILE);
   }
 
-  // THE FIX: Force 'tv' and 'mweb'. 'tv' bypasses SABR perfectly on datacenter IPs.
-  let extractorArgs = 'youtube:player_client=tv,mweb;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  // THE FIX: 'web_safari' provides HLS formats that often bypass GVS PO Token requirements
+  let extractorArgs = 'youtube:player_client=tv,web_safari;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
   finalArgs.push(
@@ -87,7 +87,6 @@ function runCommand(cmd, args, timeoutMs = 15000) {
     
     child.stdout.on('data', (data) => { stdout += data.toString(); });
     child.stderr.on('data', (data) => { 
-      // Print logs to Railway so we can see them if it fails
       console.log(`[yt-dlp log] ${data.toString().trim()}`); 
     });
 
