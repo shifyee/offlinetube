@@ -12,6 +12,7 @@ app.use(express.json());
 const COOKIES_FILE = '/tmp/cookies.txt';
 const jobs = new Map();
 
+// Force CORS headers
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -62,7 +63,8 @@ function buildYtDlpArgs(args, fetchComments) {
   const finalArgs = [];
   if (fs.existsSync(COOKIES_FILE)) finalArgs.push('--cookies', COOKIES_FILE);
 
-  let extractorArgs = 'youtube:player_client=mweb;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  // Use tv and web clients as fallbacks
+  let extractorArgs = 'youtube:player_client=tv,web;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
   finalArgs.push(
@@ -105,11 +107,13 @@ app.get('/api/info', async (req, res) => {
   let stdout = null;
 
   try {
-    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', url], true), 20000);
+    // THE FIX: Added '-f all' so yt-dlp doesn't try to auto-select a format and crash
+    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['-f', 'all', '--write-comments', '--dump-json', url], true), 20000);
   } catch (e) {
     try {
-      stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', url], false), 15000);
+      stdout = await runCommand('yt-dlp', buildYtDlpArgs(['-f', 'all', '--dump-json', url], false), 15000);
     } catch (err2) {
+      console.error('Info fetch failed completely:', err2.message);
       return res.status(500).json({ error: 'YouTube blocked the request.', details: err2.message });
     }
   }
@@ -171,7 +175,8 @@ app.post('/api/download', async (req, res) => {
   if (isMp3) {
     args = buildYtDlpArgs(['-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', tempFile, url], false);
   } else {
-    const formatStr = `bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/b`;
+    // THE FIX: Use the simplest, most robust format string
+    const formatStr = `bv*+ba/b`;
     args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url], false);
   }
   
@@ -249,6 +254,23 @@ app.get('/api/file/:jobId', (req, res) => {
     fs.unlink(job.file, () => {});
     jobs.delete(req.params.jobId);
   });
+});
+
+// --- COOKIE SYNC ENDPOINT ---
+app.post('/api/update-cookies', express.text({ type: 'text/plain' }), (req, res) => {
+  try {
+    if (!req.body) return res.status(400).send('No cookies provided');
+    let cookiesContent = req.body.trim().replace(/\r\n/g, '\n');
+    if (!cookiesContent.includes('# Netscape HTTP Cookie File') && !cookiesContent.includes('# HTTP Cookie File')) {
+      cookiesContent = '# Netscape HTTP Cookie File\n' + cookiesContent;
+    }
+    fs.writeFileSync(COOKIES_FILE, cookiesContent);
+    console.log('[Server] ✅ Cookies updated via API!');
+    res.status(200).send('Cookies updated successfully');
+  } catch (err) {
+    console.error('[Server] Failed to update cookies:', err);
+    res.status(500).send('Failed to update cookies');
+  }
 });
 
 const PORT = process.env.PORT || 8080;
