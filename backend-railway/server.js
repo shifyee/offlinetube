@@ -59,12 +59,15 @@ setInterval(() => {
 }, 1800000);
 
 // --- YT-DLP ARGS ---
-function buildYtDlpArgs(args, fetchComments) {
+// Notice: We do NOT force a specific player_client here. We let yt-dlp auto-select.
+// We keep the POT provider URL so Railway isn't blocked.
+function buildYtDlpArgs(args, fetchComments = false) {
   const finalArgs = [];
-  if (fs.existsSync(COOKIES_FILE)) finalArgs.push('--cookies', COOKIES_FILE);
+  if (fs.existsSync(COOKIES_FILE)) {
+    finalArgs.push('--cookies', COOKIES_FILE);
+  }
 
-  // Use tv and web clients as fallbacks
-  let extractorArgs = 'youtube:player_client=tv,web;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  let extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
   finalArgs.push(
@@ -107,7 +110,7 @@ app.get('/api/info', async (req, res) => {
   let stdout = null;
 
   try {
-    // THE FIX: Added '-f all' so yt-dlp doesn't try to auto-select a format and crash
+    // THE FIX: '-f all' stops yt-dlp from crashing on format selection during metadata fetch
     stdout = await runCommand('yt-dlp', buildYtDlpArgs(['-f', 'all', '--write-comments', '--dump-json', url], true), 20000);
   } catch (e) {
     try {
@@ -173,14 +176,15 @@ app.post('/api/download', async (req, res) => {
 
   let args = [];
   if (isMp3) {
-    args = buildYtDlpArgs(['-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', tempFile, url], false);
+    // Exactly from your rip project
+    args = ['-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', tempFile, url];
   } else {
-    // THE FIX: Use the simplest, most robust format string
-    const formatStr = `bv*+ba/b`;
-    args = buildYtDlpArgs(['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url], false);
+    // Exactly from your rip project. Extremely robust with fallbacks.
+    const formatStr = `bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b`;
+    args = ['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url];
   }
   
-  const child = spawn('yt-dlp', args, { detached: true });
+  const child = spawn('yt-dlp', buildYtDlpArgs(args), { detached: true });
 
   let lastProgressTime = Date.now();
   const stallChecker = setInterval(() => {
