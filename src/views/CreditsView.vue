@@ -1,24 +1,28 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue'
+
+const pfpUrl = 'https://i.ibb.co/7xbtg4Ck/pfp.png' 
+const bgUrl = 'https://i.ibb.co/xt26gF4d/780f40e1-e80f-4c5e-902a-75ec4d4c3ee7.png'
 
 const rainCanvas = ref(null);
-const containerEl = ref(null);
 let animationFrameId = null;
-let resizeObserver = null;
 
 onMounted(() => {
   const canvas = rainCanvas.value;
   const ctx = canvas.getContext('2d');
 
   const resizeCanvas = () => {
-    if (!containerEl.value) return;
-    canvas.width = containerEl.value.clientWidth;
-    canvas.height = containerEl.value.clientHeight;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
   };
   
   resizeCanvas();
-  resizeObserver = new ResizeObserver(resizeCanvas);
-  resizeObserver.observe(containerEl.value);
+  window.addEventListener('resize', resizeCanvas);
+
+  // Slight delay to ensure Vue transitions are done before starting rain
+  setTimeout(() => {
+    resizeCanvas();
+  }, 350);
 
   const drops = [];
   const splashes = [];
@@ -119,57 +123,62 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(animationFrameId);
-  if (resizeObserver && containerEl.value) {
-    resizeObserver.unobserve(containerEl.value);
-  }
+  window.removeEventListener('resize', resizeCanvas);
 });
 </script>
 
 <template>
-  <div ref="containerEl" class="relative w-full h-full min-h-screen bg-[#0a0a0a] overflow-hidden flex items-center justify-center">
-    
-    <!-- Your New Realistic Rain Canvas -->
+  <div class="min-h-[calc(100vh-3.5rem)] relative flex items-center justify-center overflow-hidden bg-[#0a0a0a]">
+
+    <!-- Background Image -->
+    <div 
+      class="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-60 z-0"
+      :style="{ backgroundImage: `url(${bgUrl})` }"
+    ></div>
+
+    <!-- The New Realistic Rain Canvas -->
     <canvas ref="rainCanvas" class="absolute inset-0 pointer-events-none z-0 mix-blend-screen"></canvas>
 
-    <!-- Foreground Content -->
-    <div class="relative z-10 w-full max-w-lg mx-4">
-      <!-- Dark Card Container -->
-      <div class="bg-[#0f0f0f]/90 backdrop-blur-sm border border-white/10 rounded-3xl p-10 flex flex-col items-center text-center shadow-[0_0_50px_rgba(0,0,0,0.8)]">
-        
-        <!-- Bear Logo with Blue Glow -->
-        <div class="w-28 h-28 rounded-full border-2 border-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.6)] overflow-hidden mb-6">
-          <!-- Using the profile picture path from your screenshot -->
-          <img src="/pfp.png" alt="shifyee" class="w-full h-full object-cover" />
+    <!-- Content Card (Glassmorphism) -->
+    <div class="relative z-10 max-w-2xl w-full mx-4 bg-black/40 backdrop-blur-xl border border-white/10 rounded-3xl p-8 md:p-12 shadow-[0_0_50px_rgba(0,0,0,0.5)] text-center">
+
+      <!-- Profile Picture with Glow -->
+      <div class="w-32 h-32 mx-auto mb-6 rounded-full p-1 bg-gradient-to-b from-blue-400 to-indigo-600 shadow-[0_0_30px_rgba(59,130,246,0.6)]">
+        <div class="w-full h-full rounded-full bg-[#0f0f0f] flex items-center justify-center overflow-hidden">
+          <img :src="pfpUrl" alt="shifyee" class="w-full h-full object-cover" />
         </div>
+      </div>
 
-        <h1 class="text-3xl font-bold text-white mb-2">shifyee</h1>
-        <p class="text-blue-400 text-xs font-bold tracking-[0.2em] uppercase mb-6">Full Stack Web Developer</p>
+      <h1 class="text-3xl font-bold mb-2 text-white">shifyee</h1>
+      <p class="text-blue-400 font-medium mb-8 tracking-widest uppercase text-xs">Full Stack Web Developer</p>
 
-        <p class="text-gray-300 italic text-sm leading-relaxed mb-8">
-          "I built OfflineTube to be a fast, private, and resilient way to enjoy YouTube. No ads, no tracking, and your favorite videos available even when the internet isn't."
-        </p>
+      <p class="text-gray-300 mb-10 leading-relaxed italic">
+        "I built OfflineTube to be a fast, private, and resilient way to enjoy YouTube. 
+        No ads, no tracking, and your favorite videos available even when the internet isn't."
+      </p>
 
-        <!-- Links Row -->
-        <div class="flex w-full gap-3 mb-8">
-          <a href="https://youtube.com" target="_blank" class="flex-1 flex flex-col items-center justify-center gap-2 bg-[#1a1a1a] hover:bg-[#2a2a2a] border border-white/5 py-4 rounded-xl transition-all duration-300 hover:scale-105">
-            <svg viewBox="0 0 24 24" class="w-6 h-6 fill-red-600"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg>
-            <span class="text-xs font-bold text-white">YouTube</span>
-          </a>
-          
-          <a href="https://github.com/shifyee/offlinetube" target="_blank" class="flex-1 flex flex-col items-center justify-center gap-2 bg-[#1a1a1a] hover:bg-[#2a2a2a] border border-white/5 py-4 rounded-xl transition-all duration-300 hover:scale-105">
-            <svg viewBox="0 0 24 24" class="w-6 h-6 fill-white"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-            <span class="text-xs font-bold text-white">GitHub</span>
-          </a>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <!-- YouTube -->
+        <a href="https://youtube.com/@shifyee" target="_blank" class="flex flex-col items-center justify-center p-4 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/5 transition-all hover:-translate-y-1 hover:shadow-[0_0_20px_rgba(255,0,0,0.3)] group">
+          <svg viewBox="0 0 24 24" class="w-8 h-8 fill-red-500 mb-2 group-hover:scale-110 transition-transform"><path d="M21.58 7.19c-.23-.86-.91-1.54-1.77-1.77C18.25 5 12 5 12 5s-6.25 0-7.81.42c-.86.23-1.54.91-1.77 1.77C2 8.75 2 12 2 12s0 3.25.42 4.81c.23.86.91 1.54 1.77 1.77C5.75 19 12 19 12 19s6.25 0 7.81-.42c.86-.23 1.54-.91 1.77-1.77C22 15.25 22 12 22 12s0-3.25-.42-4.81zM10 15V9l5.2 3-5.2 3z"/></svg>
+          <span class="font-bold text-sm text-gray-300 group-hover:text-white">YouTube</span>
+        </a>
 
-          <a href="/gams/Gams.html" class="flex-1 flex flex-col items-center justify-center gap-2 bg-[#1a1a1a] hover:bg-[#2a2a2a] border border-white/5 py-4 rounded-xl transition-all duration-300 hover:scale-105">
-            <svg viewBox="0 0 24 24" class="w-6 h-6 fill-green-500"><path d="M21.58 16.09l-1.09-7.66C20.21 6.46 18.52 5 16.53 5H7.47C5.48 5 3.79 6.46 3.51 8.43l-1.09 7.66C2.2 17.63 3.39 19 4.94 19c.68 0 1.32-.27 1.8-.75L9 16h6l2.25 2.25c.48.48 1.13.75 1.8.75 1.56 0 2.75-1.37 2.53-2.91zM11 11H9v2H8v-2H6v-1h2V8h1v2h2v1zm4-1c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm2 3c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z"/></svg>
-            <span class="text-xs font-bold text-white">Gams</span>
-          </a>
-        </div>
+        <!-- GitHub Repo -->
+        <a href="https://github.com/shifyee/offlinetube" target="_blank" class="flex flex-col items-center justify-center p-4 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/5 transition-all hover:-translate-y-1 hover:shadow-[0_0_20px_rgba(255,255,255,0.2)] group">
+          <svg viewBox="0 0 24 24" class="w-8 h-8 fill-white mb-2 group-hover:scale-110 transition-transform"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.161 22 16.418 22 12c0-5.523-4.477-10-10-10z"/></svg>
+          <span class="font-bold text-sm text-gray-300 group-hover:text-white">GitHub</span>
+        </a>
 
-        <p class="text-[11px] text-gray-500">
-          built cause chromebooks are useless offline, unless you've met me...
-        </p>
+        <!-- Gams -->
+        <a href="https://github.com/Gams-Offline/Gams" target="_blank" class="flex flex-col items-center justify-center p-4 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/5 transition-all hover:-translate-y-1 hover:shadow-[0_0_20px_rgba(74,222,128,0.3)] group">
+          <svg viewBox="0 0 24 24" class="w-8 h-8 fill-green-400 mb-2 group-hover:scale-110 transition-transform"><path d="M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-10 7H8v3H6v-3H3v-2h3V8h2v3h3v2zm4.5 2c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm4 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
+          <span class="font-bold text-sm text-gray-300 group-hover:text-white">Gams</span>
+        </a>
+      </div>
+
+      <div class="mt-10 text-xs text-gray-500">
+        built cause chromeblacks are useless offline, unless you've met me...
       </div>
     </div>
   </div>
