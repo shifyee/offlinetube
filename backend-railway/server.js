@@ -65,7 +65,8 @@ function buildYtDlpArgs(args, fetchComments = false) {
     finalArgs.push('--cookies', COOKIES_FILE);
   }
 
-  let extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  // FORCE tv and ios clients, they are much more resilient to blocks than web
+  let extractorArgs = 'youtube:player_client=tv,ios;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
   finalArgs.push(
@@ -108,11 +109,11 @@ app.get('/api/info', async (req, res) => {
   let stdout = null;
 
   try {
-    // Use '-f all' so yt-dlp doesn't crash on format selection during metadata fetch
-    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['-f', 'all', '--write-comments', '--dump-json', url], true), 20000);
+    // THE FIX: Replace '-f all' with '--ignore-no-formats-error'
+    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--ignore-no-formats-error', '--write-comments', '--dump-json', url], true), 20000);
   } catch (e) {
     try {
-      stdout = await runCommand('yt-dlp', buildYtDlpArgs(['-f', 'all', '--dump-json', url], false), 15000);
+      stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--ignore-no-formats-error', '--dump-json', url], false), 15000);
     } catch (err2) {
       console.error('Info fetch failed completely:', err2.message);
       return res.status(500).json({ error: 'YouTube blocked the request.', details: err2.message });
@@ -120,17 +121,14 @@ app.get('/api/info', async (req, res) => {
   }
 
   try {
-    // THE FIX: Parse line-by-line to ignore any extra whitespace or warnings
     let info = null;
     const lines = stdout.split('\n');
     for (const line of lines) {
       if (line.trim().startsWith('{')) {
         try {
           info = JSON.parse(line.trim());
-          break; // Found the valid JSON, stop looking
-        } catch (e) {
-          // Ignore parsing errors and try the next line
-        }
+          break; 
+        } catch (e) {}
       }
     }
     
@@ -188,7 +186,6 @@ app.post('/api/download', async (req, res) => {
   if (isMp3) {
     args = ['-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', tempFile, url];
   } else {
-    // The exact robust string from your rip project
     const formatStr = `bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b`;
     args = ['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url];
   }
