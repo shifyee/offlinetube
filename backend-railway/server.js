@@ -65,8 +65,8 @@ function buildYtDlpArgs(args, fetchComments = false) {
     finalArgs.push('--cookies', COOKIES_FILE);
   }
 
-  // SWITCHED TO android,ios - These are the most reliable clients to bypass YouTube blocks right now
-  let extractorArgs = 'youtube:player_client=android,ios;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  // THE FIX: Force 'tv' and 'mweb'. 'tv' bypasses SABR perfectly on datacenter IPs.
+  let extractorArgs = 'youtube:player_client=tv,mweb;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
   finalArgs.push(
@@ -85,10 +85,9 @@ function runCommand(cmd, args, timeoutMs = 15000) {
     const child = spawn(cmd, args, { detached: true });
     let stdout = '';
     
-    // THE FIX: We are now printing the logs so we can see them in Railway!
     child.stdout.on('data', (data) => { stdout += data.toString(); });
     child.stderr.on('data', (data) => { 
-      // This will print the debug logs to Railway
+      // Print logs to Railway so we can see them if it fails
       console.log(`[yt-dlp log] ${data.toString().trim()}`); 
     });
 
@@ -116,10 +115,10 @@ app.get('/api/info', async (req, res) => {
   console.log(`[Server] Fetching info for ${id}...`);
 
   try {
-    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--verbose', '--ignore-no-formats-error', '--write-comments', '--dump-json', url], true), 25000);
+    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--ignore-no-formats-error', '--write-comments', '--dump-json', url], true), 25000);
   } catch (e) {
     try {
-      stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--verbose', '--ignore-no-formats-error', '--dump-json', url], false), 20000);
+      stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--ignore-no-formats-error', '--dump-json', url], false), 20000);
     } catch (err2) {
       console.error('Info fetch failed completely:', err2.message);
       return res.status(500).json({ error: 'YouTube blocked the request.', details: err2.message });
@@ -162,7 +161,7 @@ app.get('/api/info', async (req, res) => {
       });
     }
     
-    console.log(`[Server] Success! Found ${formats.length} formats for ${id}.`);
+    console.log(`[Server] Success! Found ${formats.length} formats for ${id}. (Heights: ${Array.from(heights.keys()).join(', ')})`);
     
     return res.json({
       videoId: id, title: info.title, author: info.uploader, authorId: '',
