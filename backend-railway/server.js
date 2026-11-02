@@ -59,8 +59,6 @@ setInterval(() => {
 }, 1800000);
 
 // --- YT-DLP ARGS ---
-// Notice: We do NOT force a specific player_client here. We let yt-dlp auto-select.
-// We keep the POT provider URL so Railway isn't blocked.
 function buildYtDlpArgs(args, fetchComments = false) {
   const finalArgs = [];
   if (fs.existsSync(COOKIES_FILE)) {
@@ -110,7 +108,7 @@ app.get('/api/info', async (req, res) => {
   let stdout = null;
 
   try {
-    // THE FIX: '-f all' stops yt-dlp from crashing on format selection during metadata fetch
+    // Use '-f all' so yt-dlp doesn't crash on format selection during metadata fetch
     stdout = await runCommand('yt-dlp', buildYtDlpArgs(['-f', 'all', '--write-comments', '--dump-json', url], true), 20000);
   } catch (e) {
     try {
@@ -122,12 +120,24 @@ app.get('/api/info', async (req, res) => {
   }
 
   try {
-    let jsonString = stdout.trim();
-    const startIdx = jsonString.indexOf('{');
-    const endIdx = jsonString.lastIndexOf('}');
-    if (startIdx !== -1 && endIdx !== -1) jsonString = jsonString.substring(startIdx, endIdx + 1);
+    // THE FIX: Parse line-by-line to ignore any extra whitespace or warnings
+    let info = null;
+    const lines = stdout.split('\n');
+    for (const line of lines) {
+      if (line.trim().startsWith('{')) {
+        try {
+          info = JSON.parse(line.trim());
+          break; // Found the valid JSON, stop looking
+        } catch (e) {
+          // Ignore parsing errors and try the next line
+        }
+      }
+    }
+    
+    if (!info) {
+      throw new Error('Could not find valid JSON in yt-dlp output');
+    }
 
-    const info = JSON.parse(jsonString);
     const formats = [];
     const heights = new Map();
     
@@ -176,10 +186,9 @@ app.post('/api/download', async (req, res) => {
 
   let args = [];
   if (isMp3) {
-    // Exactly from your rip project
     args = ['-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', tempFile, url];
   } else {
-    // Exactly from your rip project. Extremely robust with fallbacks.
+    // The exact robust string from your rip project
     const formatStr = `bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b`;
     args = ['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url];
   }
