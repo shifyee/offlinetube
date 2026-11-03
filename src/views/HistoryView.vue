@@ -3,7 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useHistoryStore } from '../stores/history'
 import { formatDuration } from '../api/piped-client'
 import { useRouter } from 'vue-router'
-import CachedImage from '../components/CachedImage.vue' // <--- Import
+import CachedImage from '../components/CachedImage.vue'
 
 const history = useHistoryStore()
 const router = useRouter()
@@ -40,6 +40,15 @@ async function clearAll() {
   await history.clearAll()
   selected.value = []
 }
+
+function handleItemClick(item) {
+  // If it's marked as deleted and we are offline, don't navigate to avoid breaking the player
+  if (item.isDeleted && !navigator.onLine) {
+    alert("This video was deleted from your library and you are currently offline.")
+    return
+  }
+  router.push(`/watch/${item.videoId}`)
+}
 </script>
 
 <template>
@@ -72,7 +81,7 @@ async function clearAll() {
         v-for="item in history.items" 
         :key="item.id" 
         class="group flex items-center gap-4 bg-surface hover:bg-surface-2 p-3 rounded-xl border border-white/5 transition-all cursor-pointer"
-        @click="router.push(`/watch/${item.videoId}`)"
+        @click="handleItemClick(item)"
       >
         <input 
           type="checkbox" 
@@ -83,15 +92,21 @@ async function clearAll() {
         />
         
         <div class="relative w-32 aspect-video bg-surface-2 rounded-lg overflow-hidden shrink-0">
-          <!-- THE FIX: Use CachedImage -->
           <CachedImage :src="item.thumbnail" class="w-full h-full" img-class="object-cover" />
           <span class="absolute bottom-1 right-1 bg-black/80 text-[10px] px-1 rounded text-white z-10">{{ formatDuration(item.lengthSeconds) }}</span>
         </div>
         
         <div class="flex-1 min-w-0">
-          <h3 class="font-bold text-sm line-clamp-1 group-hover:text-white">{{ item.title }}</h3>
+          <h3 class="font-bold text-sm line-clamp-1 group-hover:text-white" :class="{'text-muted line-through': item.isDeleted}">{{ item.title }}</h3>
           <p class="text-xs text-muted mt-1">{{ item.author }}</p>
-          <p class="text-[11px] text-muted mt-2">Watched {{ new Date(item.watchedAt).toLocaleDateString() }}</p>
+          <div class="flex items-center gap-2 mt-1">
+            <p class="text-[11px] text-muted">Watched {{ new Date(item.watchedAt).toLocaleDateString() }}</p>
+            
+            <!-- Deleted Tag -->
+            <span v-if="item.isDeleted" class="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded font-bold">
+              Video was deleted
+            </span>
+          </div>
         </div>
       </div>
     </div>
