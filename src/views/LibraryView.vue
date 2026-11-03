@@ -1,13 +1,52 @@
-<!-- Just the template part, add the import at the top -->
 <script setup>
-// ... existing imports ...
-import CachedImage from '../components/CachedImage.vue' // <--- Import
-// ... existing logic ...
+import { ref, onMounted, onUnmounted } from 'vue'
+import { useLibraryStore } from '../stores/library'
+import { usePlaylistStore } from '../stores/playlists'
+import { formatBytes } from '../api/piped-client'
+import CachedImage from '../components/CachedImage.vue'
+
+const library = useLibraryStore()
+const playlists = usePlaylistStore()
+const storageStats = ref({ usage: 0, quota: 0 })
+const openPlaylistMenu = ref(null)
+
+async function updateStorage() {
+  if (navigator.storage && navigator.storage.estimate) {
+    try {
+      const estimate = await navigator.storage.estimate()
+      storageStats.value = {
+        usage: estimate.usage || 0,
+        quota: estimate.quota || 0
+      }
+    } catch (e) {
+      console.error('Failed to get storage estimate:', e)
+    }
+  }
+}
+
+onMounted(() => {
+  library.refresh().then(updateStorage)
+  playlists.refresh()
+})
+
+async function remove(id) {
+  if (confirm('Delete this download?')) {
+    await library.remove(id)
+    updateStorage()
+  }
+}
+
+async function addToPlaylist(playlistId, video) {
+  await playlists.addVideo(playlistId, video)
+  openPlaylistMenu.value = null
+}
+
+let interval = setInterval(updateStorage, 5000)
+onUnmounted(() => clearInterval(interval))
 </script>
 
 <template>
   <div class="max-w-7xl mx-auto px-3 py-4" @click="openPlaylistMenu = null">
-    <!-- Storage Tracker Bar -->
     <div v-if="storageStats.quota > 0" class="mb-6">
       <div class="flex items-center justify-between mb-1">
         <span class="text-xs font-medium text-muted">Storage Usage</span>
@@ -23,14 +62,12 @@ import CachedImage from '../components/CachedImage.vue' // <--- Import
       </div>
     </div>
 
-    <!-- Header -->
     <div class="flex items-center justify-between mb-4">
       <h1 class="text-xl font-semibold">Library</h1>
       <span class="text-xs text-muted">{{ library.complete.length }} saved</span>
     </div>
 
     <div v-if="library.loading" class="text-muted text-sm py-12 text-center">Loading…</div>
-
     <div v-else-if="!library.complete.length" class="text-muted text-sm py-12 text-center">
       No offline videos yet. Download one to play without internet.
     </div>
@@ -43,23 +80,17 @@ import CachedImage from '../components/CachedImage.vue' // <--- Import
       >
         <RouterLink :to="`/watch/${v.id}`">
           <div class="aspect-video bg-surface-2 overflow-hidden relative">
-            <!-- THE FIX: Use CachedImage -->
             <CachedImage 
               v-if="v.thumbnail" 
               :src="v.thumbnail" 
               class="w-full h-full" 
               img-class="object-cover transition-transform duration-500 group-hover:scale-110"
             />
-            
-            <!-- Watch Progress Bar -->
             <div 
               v-if="v.watchProgress > 0 && v.watchProgress < v.lengthSeconds - 5" 
               class="absolute bottom-0 left-0 right-0 h-1 bg-black/60 z-10"
             >
-              <div 
-                class="h-full bg-red-600" 
-                :style="{ width: `${(v.watchProgress / v.lengthSeconds) * 100}%` }"
-              ></div>
+              <div class="h-full bg-red-600" :style="{ width: `${(v.watchProgress / v.lengthSeconds) * 100}%` }"></div>
             </div>
           </div>
         </RouterLink>
@@ -68,19 +99,14 @@ import CachedImage from '../components/CachedImage.vue' // <--- Import
           <div class="text-xs text-muted mt-1">{{ v.author }}</div>
           <div class="flex items-center justify-between mt-3">
             <span class="text-[11px] text-muted font-mono">{{ formatBytes(v.size) }}</span>
-            <button
-              @click="remove(v.id)"
-              class="text-xs text-red-400 hover:text-red-300 transition-colors"
-            >Delete</button>
+            <button @click="remove(v.id)" class="text-xs text-red-400 hover:text-red-300 transition-colors">Delete</button>
           </div>
         </div>
         
-        <!-- Playlist Add Button -->
         <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
           <button 
             @click.stop="openPlaylistMenu = openPlaylistMenu === v.id ? null : v.id"
             class="bg-black/60 hover:bg-black/80 text-white p-1.5 rounded-full backdrop-blur-sm transition-colors"
-            title="Add to Playlist"
           >
             <svg viewBox="0 0 24 24" class="w-5 h-5 fill-current"><path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z"/></svg>
           </button>
