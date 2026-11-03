@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Deno (Required for yt-dlp JS challenges)
+# Install Deno
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
 # Install yt-dlp nightly binary
@@ -24,9 +24,10 @@ RUN git clone --single-branch --branch 2.0.2 https://github.com/Brainicism/bguti
     && npm install \
     && npx tsc
 
-# THE FIX: Install the yt-dlp plugin so it can talk to the POT server
+# Install the yt-dlp plugin as a .zip file in the correct directory
 RUN mkdir -p /root/.config/yt-dlp/plugins \
-    && cp -r /pot-provider /root/.config/yt-dlp/plugins/
+    && curl -L https://github.com/Brainicism/bgutil-ytdlp-pot-provider/releases/download/2.0.2/bgutil-ytdlp-pot-provider.zip \
+         -o /root/.config/yt-dlp/plugins/bgutil-ytdlp-pot-provider.zip
 
 WORKDIR /app
 
