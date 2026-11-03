@@ -2,16 +2,16 @@
 import { ref, onMounted, computed } from 'vue'
 import { usePlaylistStore } from '../stores/playlists'
 import { formatDuration } from '../api/piped-client'
+import CachedImage from '../components/CachedImage.vue'
 
 const playlists = usePlaylistStore()
 const newListName = ref('')
-const activeListId = ref(null) // Store the ID instead of the whole object
+const activeListId = ref(null)
 
 onMounted(() => {
   playlists.refresh()
 })
 
-// Always get the freshest version of the active list from the store
 const activeList = computed(() => {
   return playlists.lists.find(l => l.id === activeListId.value)
 })
@@ -27,17 +27,10 @@ async function deleteList(id) {
   await playlists.delete(id)
   if (activeListId.value === id) activeListId.value = null
 }
-
-const handleImageError = (e) => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9" style="background:#1a1a1a;width:100%;height:100%;display:block;"><rect width="16" height="9" fill="#1a1a1a"/><path d="M7.5 3.5L9.5 4.5L7.5 5.5V3.5Z" fill="#666"/></svg>`;
-  e.target.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-}
 </script>
 
 <template>
   <div class="max-w-7xl mx-auto px-3 py-4 flex gap-6">
-    
-    <!-- Sidebar for Playlists -->
     <div class="w-64 shrink-0 space-y-4">
       <h1 class="text-xl font-semibold mb-4">Playlists</h1>
       
@@ -68,7 +61,6 @@ const handleImageError = (e) => {
       </div>
     </div>
 
-    <!-- Main Content -->
     <div class="flex-1 min-w-0">
       <div v-if="!activeList" class="h-64 flex items-center justify-center text-muted text-sm border border-dashed border-white/10 rounded-xl">
         Select a playlist to view its videos.
@@ -95,8 +87,8 @@ const handleImageError = (e) => {
             <span class="text-muted text-sm font-mono w-4">{{ index + 1 }}</span>
             <RouterLink :to="`/watch/${v.videoId}`" class="flex flex-1 items-center gap-4 min-w-0">
               <div class="relative w-32 aspect-video bg-surface-2 rounded-lg overflow-hidden shrink-0">
-                <img :src="v.thumbnail" @error="handleImageError" class="w-full h-full object-cover" />
-                <span class="absolute bottom-1 right-1 bg-black/80 text-[10px] px-1 rounded text-white">{{ formatDuration(v.lengthSeconds) }}</span>
+                <CachedImage :src="v.thumbnail" class="w-full h-full" img-class="object-cover" />
+                <span class="absolute bottom-1 right-1 bg-black/80 text-[10px] px-1 rounded text-white z-10">{{ formatDuration(v.lengthSeconds) }}</span>
               </div>
               <div class="flex-1 min-w-0">
                 <h3 class="font-bold text-sm line-clamp-1 group-hover:text-white">{{ v.title }}</h3>
@@ -106,7 +98,6 @@ const handleImageError = (e) => {
             <button 
               @click.stop="playlists.removeVideo(activeList.id, v.videoId)"
               class="text-muted hover:text-red-400 p-2 opacity-0 group-hover:opacity-100 transition-all"
-              title="Remove from playlist"
             >
               <svg viewBox="0 0 24 24" class="w-5 h-5 fill-current"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
             </button>
@@ -114,6 +105,5 @@ const handleImageError = (e) => {
         </div>
       </div>
     </div>
-
   </div>
 </template>
