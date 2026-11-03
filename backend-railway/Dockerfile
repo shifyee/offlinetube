@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Deno
+# Install Deno (Required for yt-dlp JS challenges)
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
 # Install yt-dlp nightly binary
