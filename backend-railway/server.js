@@ -64,8 +64,8 @@ function buildYtDlpArgs(args, fetchComments = false) {
     finalArgs.push('--cookies', COOKIES_FILE);
   }
 
-  // THE FIX: Correct extractor argument name and explicit JS runtime
-  let extractorArgs = 'youtube:player_client=tv;youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416';
+  // NO FORCED CLIENTS. Let yt-dlp use its defaults.
+  let extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
   finalArgs.push(
@@ -114,10 +114,11 @@ app.get('/api/info', async (req, res) => {
   console.log(`[Server] Fetching info for ${id}...`);
 
   try {
-    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--ignore-no-formats-error', '--write-comments', '--dump-json', url], true), 25000);
+    // Remove -f all, let it fetch default metadata
+    stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', url], true), 25000);
   } catch (e) {
     try {
-      stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--ignore-no-formats-error', '--dump-json', url], false), 20000);
+      stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--dump-json', url], false), 20000);
     } catch (err2) {
       console.error('Info fetch failed completely:', err2.message);
       return res.status(500).json({ error: 'YouTube blocked the request.', details: err2.message });
@@ -195,6 +196,7 @@ app.post('/api/download', async (req, res) => {
   if (isMp3) {
     args = ['-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', tempFile, url];
   } else {
+    // THE EXACT RIP PROJECT STRING
     const formatStr = `bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b`;
     args = ['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url];
   }
