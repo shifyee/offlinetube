@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useHistoryStore } from '../stores/history'
 import { formatDuration } from '../api/piped-client'
 import { useRouter } from 'vue-router'
+import CachedImage from '../components/CachedImage.vue' // <--- Import
 
 const history = useHistoryStore()
 const router = useRouter()
@@ -39,11 +40,6 @@ async function clearAll() {
   await history.clearAll()
   selected.value = []
 }
-
-const handleImageError = (e) => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9" style="background:#1a1a1a;width:100%;height:100%;display:block;"><rect width="16" height="9" fill="#1a1a1a"/><path d="M7.5 3.5L9.5 4.5L7.5 5.5V3.5Z" fill="#666"/></svg>`;
-  e.target.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-}
 </script>
 
 <template>
@@ -67,7 +63,6 @@ const handleImageError = (e) => {
     </div>
 
     <div v-else class="space-y-2">
-      <!-- Select All Bar -->
       <div class="flex items-center gap-3 px-3 py-2 bg-surface rounded-lg mb-4 border border-white/5">
         <input type="checkbox" :checked="allSelected" @change="toggleSelectAll" class="w-4 h-4 accent-red-600 cursor-pointer" />
         <span class="text-sm font-medium">Select All</span>
@@ -88,8 +83,9 @@ const handleImageError = (e) => {
         />
         
         <div class="relative w-32 aspect-video bg-surface-2 rounded-lg overflow-hidden shrink-0">
-          <img :src="item.thumbnail" @error="handleImageError" class="w-full h-full object-cover" />
-          <span class="absolute bottom-1 right-1 bg-black/80 text-[10px] px-1 rounded text-white">{{ formatDuration(item.lengthSeconds) }}</span>
+          <!-- THE FIX: Use CachedImage -->
+          <CachedImage :src="item.thumbnail" class="w-full h-full" img-class="object-cover" />
+          <span class="absolute bottom-1 right-1 bg-black/80 text-[10px] px-1 rounded text-white z-10">{{ formatDuration(item.lengthSeconds) }}</span>
         </div>
         
         <div class="flex-1 min-w-0">
