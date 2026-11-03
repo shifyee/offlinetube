@@ -64,11 +64,12 @@ function buildYtDlpArgs(args, fetchComments = false) {
     finalArgs.push('--cookies', COOKIES_FILE);
   }
 
-  // Use web_safari (often returns HLS) + tv as fallback
-  let extractorArgs = 'youtube:player_client=web_safari,tv;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  // THE FIX: Correct extractor argument name and explicit JS runtime
+  let extractorArgs = 'youtube:player_client=tv;youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
   finalArgs.push(
+    '--js-runtimes', 'deno',
     '--socket-timeout', '30',
     '--no-playlist',
     '--newline',
@@ -86,13 +87,7 @@ function runCommand(cmd, args, timeoutMs = 15000) {
     
     child.stdout.on('data', (data) => { stdout += data.toString(); });
     child.stderr.on('data', (data) => { 
-      // Check for plugin confirmation in logs
-      const line = data.toString().trim();
-      if (line.includes('bgutil') || line.includes('PO Token')) {
-        console.log(`[POT] ${line}`);
-      } else {
-        console.log(`[yt-dlp log] ${line}`); 
-      }
+      console.log(`[yt-dlp log] ${data.toString().trim()}`); 
     });
 
     const timeout = setTimeout(() => {
