@@ -5,6 +5,7 @@ import { db } from '../db'
 import { useLibraryStore } from '../stores/library'
 import { useHistoryStore } from '../stores/history'
 import { usePlaylistStore } from '../stores/playlists'
+import { getCachedThumbnail } from '../utils/thumbnail' // Import the cache utility
 
 const settings = useSettingsStore()
 const library = useLibraryStore()
@@ -13,6 +14,45 @@ const playlists = usePlaylistStore()
 
 const deleteConfirmText = ref('')
 const isDeleting = ref(false)
+
+// --- NEW: Cache All Logic ---
+const isCaching = ref(false)
+const cacheProgress = ref(0)
+
+async function cacheAllThumbnails() {
+  isCaching.value = true
+  cacheProgress.value = 0
+
+  const urls = new Set()
+
+  // 1. Gather all URLs from Videos, History, and Playlists
+  library.videos.forEach(v => { if (v.thumbnail) urls.add(v.thumbnail) })
+  history.items.forEach(h => { if (h.thumbnail) urls.add(h.thumbnail) })
+  playlists.lists.forEach(p => {
+    p.videos.forEach(v => { if (v.thumbnail) urls.add(v.thumbnail) })
+  })
+
+  const urlArray = Array.from(urls)
+  if (urlArray.length === 0) {
+    alert('No thumbnails found to cache.')
+    isCaching.value = false
+    return
+  }
+
+  // 2. Loop through and cache them
+  let count = 0
+  for (const url of urlArray) {
+    // We don't check if it exists here, getCachedThumbnail handles that instantly
+    await getCachedThumbnail(url)
+    count++
+    cacheProgress.value = Math.round((count / urlArray.length) * 100)
+  }
+
+  setTimeout(() => {
+    isCaching.value = false
+    alert(`Successfully cached ${urlArray.length} thumbnails for offline use!`)
+  }, 500)
+}
 
 const colors = [
   { name: 'Red', value: 'red', hex: '#ff0033' },
@@ -26,24 +66,21 @@ async function wipeAllData() {
   isDeleting.value = true
 
   try {
-    // 1. Clear IndexedDB
     await db.videos.clear()
     await db.chunks.clear()
     await db.history.clear()
     await db.playlists.clear()
+    await db.thumbnails.clear() // Clear thumbnail cache too
     
-    // 2. Refresh stores
     await library.refresh()
     await history.refresh()
     await playlists.refresh()
 
-    // 3. Clear Service Worker Cache (Thumbnails)
     if ('caches' in window) {
       const cacheNames = await caches.keys()
       await Promise.all(cacheNames.map(name => caches.delete(name)))
     }
 
-    // 4. Hard reload the app
     window.location.reload()
   } catch (e) {
     alert('Failed to clear data: ' + e.message)
@@ -96,6 +133,26 @@ async function wipeAllData() {
       </div>
     </section>
 
+    <!-- OFFLINE CACHE -->
+    <section class="mb-10">
+      <h2 class="text-lg font-semibold border-b border-white/10 pb-2 mb-4">Offline Cache</h2>
+      
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="font-medium">Cache All Thumbnails</div>
+          <div class="text-sm text-muted">Force download every thumbnail in your Library, History, and Playlists for offline use.</div>
+        </div>
+        <button 
+          @click="cacheAllThumbnails" 
+          :disabled="isCaching"
+          class="h-10 px-6 rounded-lg bg-surface-2 hover:bg-surface-3 text-white font-bold transition-colors disabled:opacity-50 flex items-center gap-2"
+        >
+          <svg v-if="isCaching" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+          {{ isCaching ? `Caching... ${cacheProgress}%` : 'Cache All' }}
+        </button>
+      </div>
+    </section>
+
     <!-- DOWNLOADS -->
     <section class="mb-10">
       <h2 class="text-lg font-semibold border-b border-white/10 pb-2 mb-4">Downloads</h2>
@@ -144,7 +201,7 @@ async function wipeAllData() {
     </section>
 
     <div class="text-xs text-muted text-center mt-12">
-      Offline Tube · v0.2.0
+      Offline Tube · v0.4.0
     </div>
   </div>
 </template>
