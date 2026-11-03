@@ -1,63 +1,8 @@
+<!-- Just the template part, add the import at the top -->
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
-import { useLibraryStore } from '../stores/library'
-import { usePlaylistStore } from '../stores/playlists' // NEW
-import { formatBytes } from '../api/piped-client'
-
-const library = useLibraryStore()
-const playlists = usePlaylistStore() // NEW
-const storageStats = ref({ usage: 0, quota: 0 })
-
-// Playlist dropdown state
-const openPlaylistMenu = ref(null)
-
-async function updateStorage() {
-  if (navigator.storage && navigator.storage.estimate) {
-    try {
-      const estimate = await navigator.storage.estimate()
-      storageStats.value = {
-        usage: estimate.usage || 0,
-        quota: estimate.quota || 0
-      }
-    } catch (e) {
-      console.error('Failed to get storage estimate:', e)
-    }
-  }
-}
-
-const handleImageError = (e) => {
-  if (e.target.src.includes('mqdefault')) {
-    e.target.src = e.target.src.replace('mqdefault', 'hqdefault');
-    return;
-  }
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9" style="background:#1a1a1a;width:100%;height:100%;display:block;">
-    <rect width="16" height="9" fill="#1a1a1a"/>
-    <circle cx="8" cy="4.5" r="1.5" fill="#2a2a2a"/>
-    <path d="M7.5 3.5L9.5 4.5L7.5 5.5V3.5Z" fill="#666"/>
-  </svg>`;
-  e.target.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-  e.target.onerror = null;
-}
-
-onMounted(() => {
-  library.refresh().then(updateStorage)
-  playlists.refresh()
-})
-
-async function remove(id) {
-  if (confirm('Delete this download?')) {
-    await library.remove(id)
-    updateStorage()
-  }
-}
-
-async function addToPlaylist(playlistId, video) {
-  await playlists.addVideo(playlistId, video)
-  openPlaylistMenu.value = null
-}
-
-let interval = setInterval(updateStorage, 5000)
-onUnmounted(() => clearInterval(interval))
+// ... existing imports ...
+import CachedImage from '../components/CachedImage.vue' // <--- Import
+// ... existing logic ...
 </script>
 
 <template>
@@ -98,18 +43,18 @@ onUnmounted(() => clearInterval(interval))
       >
         <RouterLink :to="`/watch/${v.id}`">
           <div class="aspect-video bg-surface-2 overflow-hidden relative">
-            <img 
+            <!-- THE FIX: Use CachedImage -->
+            <CachedImage 
               v-if="v.thumbnail" 
               :src="v.thumbnail" 
-              @error="handleImageError"
-              class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" 
-              alt="" 
+              class="w-full h-full" 
+              img-class="object-cover transition-transform duration-500 group-hover:scale-110"
             />
             
             <!-- Watch Progress Bar -->
             <div 
               v-if="v.watchProgress > 0 && v.watchProgress < v.lengthSeconds - 5" 
-              class="absolute bottom-0 left-0 right-0 h-1 bg-black/60"
+              class="absolute bottom-0 left-0 right-0 h-1 bg-black/60 z-10"
             >
               <div 
                 class="h-full bg-red-600" 
@@ -130,8 +75,8 @@ onUnmounted(() => clearInterval(interval))
           </div>
         </div>
         
-        <!-- Playlist Add Button (Visible on Hover) -->
-        <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+        <!-- Playlist Add Button -->
+        <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
           <button 
             @click.stop="openPlaylistMenu = openPlaylistMenu === v.id ? null : v.id"
             class="bg-black/60 hover:bg-black/80 text-white p-1.5 rounded-full backdrop-blur-sm transition-colors"
@@ -140,7 +85,6 @@ onUnmounted(() => clearInterval(interval))
             <svg viewBox="0 0 24 24" class="w-5 h-5 fill-current"><path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z"/></svg>
           </button>
           
-          <!-- Dropdown Menu -->
           <div v-if="openPlaylistMenu === v.id" class="absolute top-full right-0 mt-2 w-48 bg-[#212121] border border-white/10 rounded-lg shadow-xl py-1 z-50">
             <div class="px-3 py-2 text-xs font-bold text-muted uppercase border-b border-white/10 mb-1">Add to...</div>
             <button 
