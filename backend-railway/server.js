@@ -12,6 +12,7 @@ app.use(express.json());
 const COOKIES_FILE = '/tmp/cookies.txt';
 const jobs = new Map();
 
+// Force CORS headers
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -64,7 +65,6 @@ function buildYtDlpArgs(args, fetchComments = false) {
     finalArgs.push('--cookies', COOKIES_FILE);
   }
 
-  // NO FORCED CLIENTS. Let yt-dlp use its defaults.
   let extractorArgs = 'youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
@@ -114,7 +114,6 @@ app.get('/api/info', async (req, res) => {
   console.log(`[Server] Fetching info for ${id}...`);
 
   try {
-    // Remove -f all, let it fetch default metadata
     stdout = await runCommand('yt-dlp', buildYtDlpArgs(['--write-comments', '--dump-json', url], true), 25000);
   } catch (e) {
     try {
@@ -196,8 +195,9 @@ app.post('/api/download', async (req, res) => {
   if (isMp3) {
     args = ['-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', tempFile, url];
   } else {
-    // THE EXACT RIP PROJECT STRING
-    const formatStr = `bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b`;
+    // THE FIX: Height constraint [height<=${h}] is back. 
+    // This forces it to get the best video UP TO the selected height, not the absolute best.
+    const formatStr = `bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/b`;
     args = ['-f', formatStr, '--merge-output-format', 'mp4', '-o', tempFile, url];
   }
   
