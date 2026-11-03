@@ -12,7 +12,6 @@ app.use(express.json());
 const COOKIES_FILE = '/tmp/cookies.txt';
 const jobs = new Map();
 
-// Force CORS headers
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -65,8 +64,8 @@ function buildYtDlpArgs(args, fetchComments = false) {
     finalArgs.push('--cookies', COOKIES_FILE);
   }
 
-  // THE FIX: 'web_safari' provides HLS formats that often bypass GVS PO Token requirements
-  let extractorArgs = 'youtube:player_client=tv,web_safari;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
+  // Use web_safari (often returns HLS) + tv as fallback
+  let extractorArgs = 'youtube:player_client=web_safari,tv;youtube:getpot_bgutil_baseurl=http://127.0.0.1:4416';
   if (fetchComments) extractorArgs += ';youtube:max_comments=20,20,0,0';
 
   finalArgs.push(
@@ -87,7 +86,13 @@ function runCommand(cmd, args, timeoutMs = 15000) {
     
     child.stdout.on('data', (data) => { stdout += data.toString(); });
     child.stderr.on('data', (data) => { 
-      console.log(`[yt-dlp log] ${data.toString().trim()}`); 
+      // Check for plugin confirmation in logs
+      const line = data.toString().trim();
+      if (line.includes('bgutil') || line.includes('PO Token')) {
+        console.log(`[POT] ${line}`);
+      } else {
+        console.log(`[yt-dlp log] ${line}`); 
+      }
     });
 
     const timeout = setTimeout(() => {
