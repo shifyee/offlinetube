@@ -2,29 +2,48 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { RouterView, useRouter, useRoute } from 'vue-router'
 import { useLibraryStore } from './stores/library'
-import { useSettingsStore } from './stores/settings' // NEW
+import { useSettingsStore } from './stores/settings'
 import DownloadToasts from './components/DownloadToasts.vue'
 import Sidebar from './components/Sidebar.vue'
 
 const library = useLibraryStore()
-const settings = useSettingsStore() // NEW
+const settings = useSettingsStore()
 const router = useRouter()
 const route = useRoute()
 const q = ref('')
 const isSidebarOpen = ref(true)
 const isOnline = ref(navigator.onLine)
 
+// Offline Toast State
+const showOfflineToast = ref(false)
+const toastMessage = ref('')
+let toastTimeout = null
+
+function triggerToast(msg) {
+  toastMessage.value = msg
+  showOfflineToast.value = true
+  clearTimeout(toastTimeout)
+  toastTimeout = setTimeout(() => { showOfflineToast.value = false }, 4000)
+}
+
 onMounted(() => {
-  settings.applyTheme() // Apply color and animation settings immediately
+  settings.applyTheme()
   library.refresh()
   
-  window.addEventListener('online', () => isOnline.value = true)
-  window.addEventListener('offline', () => isOnline.value = false)
+  window.addEventListener('online', () => {
+    isOnline.value = true
+    triggerToast('You are back online.')
+  })
+  
+  window.addEventListener('offline', () => {
+    isOnline.value = false
+    triggerToast('You are offline. Playing downloaded videos only.')
+  })
 })
 
 onUnmounted(() => {
-  window.removeEventListener('online', () => isOnline.value = true)
-  window.removeEventListener('offline', () => isOnline.value = false)
+  window.removeEventListener('online', () => {})
+  window.removeEventListener('offline', () => {})
 })
 
 function doSearch() {
@@ -43,9 +62,13 @@ function doSearch() {
 
 <template>
   <div class="min-h-screen flex bg-bg text-text flex-col">
-    <Transition name="fade-slide">
-      <div v-if="!isOnline" class="bg-red-900 text-white text-center text-sm py-1 z-50">
-        You are currently offline. Playing downloaded videos only.
+    
+    <!-- Offline Toast Popup -->
+    <Transition name="toast">
+      <div v-if="showOfflineToast" class="fixed top-16 left-1/2 -translate-x-1/2 z-[100] bg-surface/90 backdrop-blur-md text-white px-6 py-3 rounded-xl shadow-2xl border border-white/10 flex items-center gap-3 text-sm font-medium">
+        <svg v-if="!isOnline" viewBox="0 0 24 24" class="w-5 h-5 fill-red-500"><path d="M1 9l2 2c4.97-4.97 13.03-4.97 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3c-1.65-1.66-4.34-1.66-6 0zm-4-4l2 2c2.76-2.76 7.24-2.76 10 0l2-2C15.14 9.14 8.87 9.14 5 13z"/></svg>
+        <svg v-else viewBox="0 0 24 24" class="w-5 h-5 fill-green-500"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+        {{ toastMessage }}
       </div>
     </Transition>
 
