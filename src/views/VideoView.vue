@@ -5,12 +5,14 @@ import { api, bestThumbnail, formatDuration, formatBytes } from '../api/piped-cl
 import { useDownloadsStore } from '../stores/downloads'
 import { useLibraryStore } from '../stores/library'
 import { useHistoryStore } from '../stores/history'
+import { getCachedThumbnail } from '../utils/thumbnail' // <--- Import
 import { db } from '../db'
 import Player from '../components/Player.vue'
 import DownloadModal from '../components/DownloadModal.vue'
+import CachedImage from '../components/CachedImage.vue' // <--- Import
 
 const route = useRoute()
-const router = useRouter() 
+const router = useRouter()
 const downloads = useDownloadsStore()
 const library = useLibraryStore()
 const history = useHistoryStore()
@@ -22,12 +24,12 @@ const error = ref(null)
 const showComments = ref(false)
 const showModal = ref(false)
 const isExpanded = ref(false)
+const poster = ref(null) // <--- Change to ref
 
 const isLiked = ref(false)
 const isCopied = ref(false)
 
 const isOffline = computed(() => library.videos.some(v => v.id === route.params.id && v.status === 'complete'))
-const poster = computed(() => video.value ? (bestThumbnail(video.value)?.url || null) : null)
 
 const getAvatarColor = (name) => {
   const colors = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#22c55e', '#06b6d4', '#3b82f6', '#6366f1', '#a855f7', '#ec4899']
@@ -43,6 +45,7 @@ async function load(id) {
   loading.value = true
   error.value = null
   video.value = null
+  poster.value = null
   upNext.value = []
   showComments.value = false
   isLiked.value = false
@@ -63,10 +66,10 @@ async function load(id) {
       videoThumbnails: localVideo.thumbnail ? [{ url: localVideo.thumbnail }] : [],
       formatStreams: [{ url: 'offline' }]
     }
+    poster.value = localVideo.thumbnail // It's already Base64
     
     upNext.value = library.complete.filter(v => v.id !== id).slice(0, 10)
     loading.value = false
-    // Removed history.add() from here
     return
   }
 
@@ -75,7 +78,11 @@ async function load(id) {
     if (video.value.related && video.value.related.length > 0) {
       upNext.value = video.value.related.filter(v => v.videoId !== id).slice(0, 8)
     }
-    // Removed history.add() from here
+    
+    // Cache the poster for the player
+    const rawUrl = bestThumbnail(video.value)?.url
+    if (rawUrl) poster.value = await getCachedThumbnail(rawUrl)
+    
   } catch (e) {
     error.value = String(e.message || e)
   } finally {
@@ -113,9 +120,6 @@ onMounted(() => {
   library.refresh().then(() => load(route.params.id))
 })
 watch(() => route.params.id, (id) => { if (id) load(id) })
-
-const handleImageError = (e) => { e.target.src = 'https://placehold.co/400x225/1f1f1f/aaaaaa?text=No+Thumbnail' }
-const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?name=${video.value?.author?.charAt(0)}&background=282828&color=fff` }
 </script>
 
 <template>
@@ -127,7 +131,6 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
 
         <div v-else-if="video">
           <div class="aspect-video bg-black rounded-xl overflow-hidden shadow-lg">
-            <!-- Added @watched event listener -->
             <Player 
               :video-id="isOffline ? null : route.params.id" 
               :offline-video-id="isOffline ? route.params.id : null" 
@@ -135,7 +138,6 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
               :up-next="upNext"
               @next="(id) => $router.push(`/watch/${id}`)"
               @video-ended="handleVideoEnded"
-              @watched="history.add(video)"
             />
           </div>
 
@@ -144,7 +146,7 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
           <div class="flex flex-wrap items-center justify-between gap-4 mt-3 border-b border-white/10 pb-4">
             <div class="flex items-center gap-3">
               <div class="w-11 h-11 rounded-full bg-surface-2 flex items-center justify-center text-lg font-bold text-muted shrink-0 overflow-hidden">
-                <img v-if="video.authorAvatar" :src="video.authorAvatar" @error="handleAvatarError" class="w-full h-full object-cover" />
+                <img v-if="video.authorAvatar" :src="video.authorAvatar" class="w-full h-full object-cover" />
                 <span v-else>{{ video.author?.charAt(0) || '?' }}</span>
               </div>
               <div>
@@ -228,8 +230,14 @@ const handleAvatarError = (e) => { e.target.src = `https://ui-avatars.com/api/?n
         <div class="space-y-3">
           <RouterLink v-for="v in upNext" :key="v.videoId || v.id" :to="`/watch/${v.videoId || v.id}`" class="flex gap-2 group">
             <div class="relative w-40 aspect-video bg-surface rounded-lg overflow-hidden shrink-0">
-              <img v-if="bestThumbnail(v) || v.thumbnail" :src="bestThumbnail(v)?.url || v.thumbnail" @error="handleImageError" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-              <span v-if="v.lengthSeconds" class="absolute bottom-1 right-1 bg-black/80 text-[11px] px-1 rounded">{{ formatDuration(v.lengthSeconds) }}</span>
+              <!-- THE FIX: Use CachedImage -->
+              <CachedImage 
+                v-if="bestThumbnail(v) || v.thumbnail" 
+                :src="bestThumbnail(v)?.url || v.thumbnail" 
+                class="w-full h-full group-hover:scale-105 transition-transform duration-300" 
+                img-class="object-cover"
+              />
+              <span v-if="v.lengthSeconds" class="absolute bottom-1 right-1 bg-black/80 text-[11px] px-1 rounded z-10">{{ formatDuration(v.lengthSeconds) }}</span>
             </div>
             <div class="flex-1 min-w-0">
               <h3 class="text-sm font-bold line-clamp-2 group-hover:text-white transition-colors">{{ v.title }}</h3>
