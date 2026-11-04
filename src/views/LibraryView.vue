@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useLibraryStore } from '../stores/library'
 import { usePlaylistStore } from '../stores/playlists'
-import { formatBytes } from '../api/piped-client'
+import { formatBytes, formatDuration } from '../api/piped-client' // <--- Added formatDuration
 import CachedImage from '../components/CachedImage.vue'
 
 const library = useLibraryStore()
@@ -32,6 +32,7 @@ onMounted(() => {
 async function remove(id) {
   if (confirm('Delete this download?')) {
     await library.remove(id)
+    await playlists.refresh()
     updateStorage()
   }
 }
@@ -86,6 +87,15 @@ onUnmounted(() => clearInterval(interval))
               class="w-full h-full" 
               img-class="object-cover transition-transform duration-500 group-hover:scale-110"
             />
+            
+            <!-- NEW: Duration Timestamp -->
+            <span 
+              v-if="v.lengthSeconds" 
+              class="absolute bottom-1.5 right-1.5 bg-black/80 text-[11px] px-1.5 py-0.5 rounded text-white z-10 font-medium"
+            >
+              {{ formatDuration(v.lengthSeconds) }}
+            </span>
+
             <div 
               v-if="v.watchProgress > 0 && v.watchProgress < v.lengthSeconds - 5" 
               class="absolute bottom-0 left-0 right-0 h-1 bg-black/60 z-10"
