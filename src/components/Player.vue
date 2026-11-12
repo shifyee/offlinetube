@@ -98,10 +98,9 @@ async function setupPlayer() {
     try {
       const { assembleBlob } = await import('../db')
       const savedVideo = await db.videos.get(props.offlineVideoId)
-      const blob = await assembleBlob(props.offlineVideoId)
+      const mimeType = savedVideo?.mimeType || (savedVideo?.format === 'mp3' ? 'audio/mpeg' : 'video/mp4')
+      const blob = await assembleBlob(props.offlineVideoId, mimeType)
       objectUrl = URL.createObjectURL(blob)
-      
-      const mimeType = savedVideo?.format === 'mp3' ? 'audio/mpeg' : 'video/mp4'
       await player.load(objectUrl, undefined, mimeType)
     } catch (e) {
       error.value = `Offline load failed: ${e.message}`
