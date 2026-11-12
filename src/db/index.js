@@ -10,10 +10,10 @@ db.version(4).stores({
   thumbnails: 'url' 
 })
 
-export async function assembleBlob(videoId) {
+export async function assembleBlob(videoId, mimeType = 'video/mp4') {
   const chunks = await db.chunks.where('videoId').equals(videoId).toArray()
   chunks.sort((a, b) => a.seq - b.seq)
-  return new Blob(chunks.map(c => c.blob), { type: 'video/mp4' })
+  return new Blob(chunks.map(c => c.blob), { type: mimeType || 'video/mp4' })
 }
 
 export async function clearChunks(videoId) {
